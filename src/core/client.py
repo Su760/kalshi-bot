@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import time
-import urllib.parse
 from email.utils import parsedate_to_datetime
 from typing import Any
 
@@ -79,7 +78,7 @@ class _KalshiAuth(httpx.Auth):
 
     def auth_flow(
         self, request: httpx.Request
-    ):  # type: ignore[override]
+    ) -> Any:
         headers = build_headers(
             key_id=self._key_id,
             private_key=self._private_key,
@@ -229,7 +228,7 @@ class KalshiClient:
     def close(self) -> None:
         self._http.close()
 
-    def __enter__(self) -> "KalshiClient":
+    def __enter__(self) -> KalshiClient:
         return self
 
     def __exit__(self, *args: Any) -> None:

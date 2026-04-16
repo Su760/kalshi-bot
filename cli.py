@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import sys
+import time
 import traceback
+from email.utils import parsedate_to_datetime
 
+import httpx
 import typer
 from rich.console import Console
 
@@ -17,31 +19,32 @@ def health() -> None:
     """Verify connectivity, auth, and clock skew against Kalshi demo."""
     try:
         from src.config.settings import get_settings
+
         settings = get_settings()
     except Exception as exc:
-        # pydantic ValidationError surfaces missing required fields
         msg = str(exc)
         if "KALSHI_API_KEY_ID" in msg or "field required" in msg.lower():
             console.print("Missing required env var: KALSHI_API_KEY_ID", style="red")
         else:
             console.print(f"Config error: {msg}", style="red")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     try:
         from src.core.auth import load_private_key
+
         load_private_key(settings.KALSHI_PRIVATE_KEY_PATH)
     except FileNotFoundError:
         console.print(
             f"Private key not found at {settings.KALSHI_PRIVATE_KEY_PATH}", style="red"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     try:
-        from src.core.client import KalshiClient, KalshiAuthError, KalshiClockSkewError
+        from src.core.client import KalshiAuthError, KalshiClient, KalshiClockSkewError
 
         with KalshiClient(settings) as client:
             try:
-                status_data = client.get_exchange_status()
+                client.get_exchange_status()
             except KalshiClockSkewError as exc:
                 skew_ms = str(exc).split()[2].rstrip("ms")
                 console.print(
@@ -49,20 +52,16 @@ def health() -> None:
                     "Run `sudo chronyd -q` or equivalent.",
                     style="red",
                 )
-                raise typer.Exit(1)
-            except KalshiAuthError:
+                raise typer.Exit(1) from exc
+            except KalshiAuthError as exc:
                 console.print(
                     "Authentication failed. Check KALSHI_API_KEY_ID and PEM "
                     "match the same Kalshi account.",
                     style="red",
                 )
-                raise typer.Exit(1)
+                raise typer.Exit(1) from exc
 
-            import time
-            from email.utils import parsedate_to_datetime
-            import httpx
-
-            # Measure clock skew from a fresh status call
+            # Measure clock skew from a raw unauthenticated call
             response = httpx.get(
                 f"{settings.KALSHI_REST_BASE_URL}/exchange/status", timeout=10.0
             )
@@ -83,7 +82,7 @@ def health() -> None:
     except Exception as exc:
         traceback.print_exc()
         console.print(f"\nstatus=FAIL: {exc}", style="red")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     console.print(f"env={settings.KALSHI_ENV}")
     console.print(f"base_url={settings.KALSHI_REST_BASE_URL}")

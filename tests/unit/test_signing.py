@@ -8,11 +8,10 @@ import time
 import pytest
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey, RSAPublicKey
-from cryptography.hazmat.primitives.asymmetric import rsa
 
-from src.core.auth import build_headers, sign_pss
+from src.core.auth import build_headers, load_private_key, sign_pss
 
 
 def _generate_keypair() -> tuple[RSAPrivateKey, RSAPublicKey]:
@@ -128,3 +127,22 @@ def test_salt_length_is_digest_length() -> None:
     # by checking the signature was created with the right salt_length
     # A signature created with DIGEST_LENGTH will have a specific format
     assert len(sig) == 256  # 2048-bit RSA = 256 bytes signature
+
+
+def test_load_private_key_roundtrip(tmp_path: pytest.TempPathFactory) -> None:
+    from cryptography.hazmat.primitives import serialization
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem_bytes = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    key_file = tmp_path / "test.pem"  # type: ignore[operator]
+    key_file.write_bytes(pem_bytes)
+    loaded = load_private_key(str(key_file))
+    assert isinstance(loaded, RSAPrivateKey)
+    # Verify the loaded key signs correctly
+    msg = "roundtrip_test"
+    sig = sign_pss(loaded, msg)
+    _verify_pss(private_key.public_key(), msg, sig)
