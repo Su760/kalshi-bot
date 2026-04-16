@@ -1,0 +1,17 @@
+.env
+secrets/
+data/
+__pycache__/
+*.pyc
+.venv/
+*.pem
+KILL
+backtest_results/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+*.db
+*.db-wal
+*.db-shm
