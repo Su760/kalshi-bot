@@ -1,1 +1,42 @@
-# pyproject.toml — implemented in next commit
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "kalshi-bot"
+version = "0.1.0"
+description = "Kalshi trading bot — Phase 0 auth + client scaffold"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx==0.28.1",
+    "cryptography==44.0.0",
+    "pydantic==2.10.3",
+    "pydantic-settings==2.7.0",
+    "python-dotenv==1.0.1",
+    "typer==0.15.1",
+    "rich==13.9.4",
+    "structlog==24.4.0",
+    "tenacity==9.0.0",
+    "aiolimiter==1.2.1",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/core/auth.py", "src/core/client.py", "src/config/settings.py", "src/config/constants.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
