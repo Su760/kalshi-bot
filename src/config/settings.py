@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # Optional with defaults
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "console"] = "json"
+    DB_PATH: str = "./data/kalshi.db"
 
     def model_post_init(self, __context: object) -> None:
         if self.KALSHI_ENV == "prod":

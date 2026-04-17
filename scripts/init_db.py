@@ -1,3 +1,14 @@
-"""Phase 1 will implement SQLite schema init. Stub for Phase 0."""
+"""Initialize the SQLite database from schema.sql."""
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from src.storage.db import get_default_db, apply_schema
+
+SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "../src/storage/schema.sql")
+
 if __name__ == "__main__":
-    print("init_db: Phase 1 not implemented yet; nothing to do.")
+    conn = get_default_db()
+    apply_schema(conn, SCHEMA_PATH)
+    conn.close()
+    print("Database initialized successfully.")

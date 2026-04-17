@@ -1,4 +1,4 @@
-.PHONY: setup install test test-unit lint format typecheck health clean
+.PHONY: setup install test test-unit lint format typecheck health clean init-db seed
 
 setup: install
 	@echo "Setup complete. Copy .env.example to .env and fill in credentials."
@@ -20,7 +20,13 @@ format:
 	ruff check --fix src tests cli.py
 
 typecheck:
-	mypy src/core/auth.py src/core/client.py src/config/
+	mypy src/core/auth.py src/core/client.py src/config/ src/core/types.py src/core/universe.py src/storage/db.py
+
+init-db:
+	python scripts/init_db.py
+
+seed:
+	python scripts/seed_universe.py
 
 health:
 	python cli.py health
