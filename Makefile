@@ -20,7 +20,7 @@ format:
 	ruff check --fix src tests cli.py
 
 typecheck:
-	mypy src/core/auth.py src/core/client.py src/config/ src/core/types.py src/core/universe.py src/storage/db.py
+	mypy src/core/auth.py src/core/client.py src/config/ src/core/types.py src/core/universe.py src/storage/db.py src/core/orderbook.py src/core/ws.py src/storage/orderbook_writer.py
 
 init-db:
 	python scripts/init_db.py
