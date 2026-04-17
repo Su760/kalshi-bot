@@ -1,0 +1,73 @@
+{
+  "ticker": "TEST-MARKET-0001",
+  "messages": [
+    {
+      "type": "orderbook_snapshot",
+      "msg": {
+        "market_ticker": "TEST-MARKET-0001",
+        "seq": 100,
+        "yes": [
+          ["0.55", 50],
+          ["0.54", 100],
+          ["0.53", 200]
+        ],
+        "no": [
+          ["0.44", 75],
+          ["0.43", 150]
+        ]
+      }
+    },
+    {
+      "type": "orderbook_delta",
+      "msg": {
+        "market_ticker": "TEST-MARKET-0001",
+        "side": "yes",
+        "price": "0.55",
+        "delta": -20,
+        "seq": 101
+      }
+    },
+    {
+      "type": "orderbook_delta",
+      "msg": {
+        "market_ticker": "TEST-MARKET-0001",
+        "side": "yes",
+        "price": "0.56",
+        "delta": 30,
+        "seq": 102
+      }
+    },
+    {
+      "type": "orderbook_delta",
+      "msg": {
+        "market_ticker": "TEST-MARKET-0001",
+        "side": "no",
+        "price": "0.44",
+        "delta": -75,
+        "seq": 103
+      }
+    },
+    {
+      "type": "orderbook_delta",
+      "msg": {
+        "market_ticker": "TEST-MARKET-0001",
+        "side": "yes",
+        "price": "0.55",
+        "delta": -30,
+        "seq": 104
+      }
+    }
+  ],
+  "expected_final_state": {
+    "yes_bids": [
+      ["0.56", 30],
+      ["0.54", 100],
+      ["0.53", 200]
+    ],
+    "no_bids": [["0.43", 150]],
+    "best_yes_bid": "0.56",
+    "best_no_bid": "0.43",
+    "yes_ask_impl": "0.57",
+    "spread_cents": 1
+  }
+}
