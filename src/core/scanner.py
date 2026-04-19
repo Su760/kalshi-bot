@@ -1,0 +1,143 @@
+"""Core +EV scanner — market-agnostic signal module.
+
+Implements the SignalModule protocol. Aggregates signals from pure detector
+functions in scanner_rules.py. Every market category is in scope.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+
+import structlog
+
+from src.core.orderbook import LocalOrderbook
+from src.core.scanner_rules import (
+    SubSignal,
+    detect_bracket_sum_arb,
+    detect_thin_spread,
+)
+from src.core.sizing import net_edge
+from src.core.types import Market, Orderbook
+from src.modules.base import Signal
+
+logger = structlog.get_logger(__name__)
+
+MIN_EDGE_PCT = 0.08
+MIN_NET_EDGE_PCT = 0.02
+MIN_VOLUME_24H = 200
+MIN_OPEN_INTEREST = 50
+BRACKET_SUM_MIN_DEVIATION_CENTS = 3
+SPREAD_Z_THRESHOLD = 2.0
+
+
+class Scanner:
+    """Market-agnostic +EV scanner.
+
+    Usage:
+        scanner = Scanner(live_books=live_books)
+        signal = scanner.predict(market, now=datetime.utcnow())
+    """
+
+    name: str = "scanner"
+    enabled: bool = True
+
+    def __init__(
+        self,
+        live_books: dict[str, LocalOrderbook],
+        markets_by_event: dict[str, list[Market]] | None = None,
+        category_medians: dict[str, float] | None = None,
+    ) -> None:
+        """
+        Args:
+            live_books: ticker → LocalOrderbook (from KalshiWebSocket)
+            markets_by_event: event_ticker → list of markets (for bracket arb)
+            category_medians: category → median spread in cents (for thin-spot)
+        """
+        self._books = live_books
+        self._markets_by_event: dict[str, list[Market]] = markets_by_event or {}
+        self._category_medians: dict[str, float] = category_medians or {}
+
+    def applies_to(self, market: Market) -> bool:
+        """Scanner applies to every market with sufficient liquidity."""
+        return (
+            market.status == "open"
+            and market.volume_24h >= MIN_VOLUME_24H
+            and market.open_interest >= MIN_OPEN_INTEREST
+        )
+
+    def predict(self, market: Market, now: datetime) -> Signal | None:
+        """Aggregate all sub-detector signals, return highest-confidence or None."""
+        book = self._books.get(market.ticker)
+        if book is None:
+            return None
+
+        ob: Orderbook = book.to_orderbook()
+        if not ob.yes_bids or not ob.no_bids:
+            return None
+
+        sub_signals: list[SubSignal] = []
+
+        # --- Detector 1: bracket sum arb ---
+        event_markets = self._markets_by_event.get(market.event_ticker, [])
+        if len(event_markets) >= 2:
+            event_obs: dict[str, Orderbook] = {}
+            for m in event_markets:
+                b = self._books.get(m.ticker)
+                if b is not None:
+                    event_obs[m.ticker] = b.to_orderbook()
+            arb_signals = detect_bracket_sum_arb(
+                event_ticker=market.event_ticker,
+                markets=event_markets,
+                orderbooks=event_obs,
+                min_deviation_cents=BRACKET_SUM_MIN_DEVIATION_CENTS,
+            )
+            for s in arb_signals:
+                if s.debug.get("market_ticker") == market.ticker:
+                    sub_signals.append(s)
+
+        # --- Detector 2: thin spread ---
+        category_median = self._category_medians.get(market.category, 0.0)
+        thin = detect_thin_spread(
+            market=market,
+            orderbook=ob,
+            category_median_spread_cents=category_median,
+            z_threshold=SPREAD_Z_THRESHOLD,
+            min_volume_24h=MIN_VOLUME_24H,
+        )
+        if thin is not None:
+            sub_signals.append(thin)
+
+        if not sub_signals:
+            return None
+
+        best = max(sub_signals, key=lambda s: s.confidence)
+
+        best_yes = ob.yes_bids[0].price
+        yes_ask = Decimal("1") - ob.no_bids[0].price
+        market_mid = float((best_yes + yes_ask) / Decimal("2"))
+
+        raw_edge = abs(best.my_probability - market_mid)
+        if raw_edge < MIN_EDGE_PCT:
+            return None
+
+        net = net_edge(
+            my_prob=best.my_probability,
+            market_price=Decimal(str(market_mid)),
+            is_maker=True,
+        )
+        if net < MIN_NET_EDGE_PCT:
+            return None
+
+        return Signal(
+            my_probability=best.my_probability,
+            confidence=best.confidence,
+            data_freshness_seconds=0,
+            source_module="scanner",
+            debug={
+                "detector": best.detector,
+                "market_mid": round(market_mid, 4),
+                "raw_edge": round(raw_edge, 4),
+                "net_edge": round(net, 4),
+                **best.debug,
+            },
+        )
