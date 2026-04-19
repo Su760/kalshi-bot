@@ -188,7 +188,7 @@ class KalshiClient:
     def get_markets(
         self,
         *,
-        status: str = "active",
+        status: str = "open",
         limit: int = 1000,
         cursor: str | None = None,
     ) -> dict[str, Any]:

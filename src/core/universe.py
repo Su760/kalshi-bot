@@ -91,7 +91,7 @@ class UniverseFetcher:
         page = 0
 
         while True:
-            resp = self._client.get_markets(status="active", limit=1000, cursor=cursor)
+            resp = self._client.get_markets(status="open", limit=1000, cursor=cursor)
             raw_markets: list[dict[str, Any]] = resp.get("markets") or []
             for raw in raw_markets:
                 try:
