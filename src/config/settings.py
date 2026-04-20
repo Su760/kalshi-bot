@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     KILL_SWITCH_FILE: str = "./KILL"
     RISK_BALANCE_REFRESH_INTERVAL_S: int = 30
 
+    # Phase 6 — reconciliation
+    RECONCILE_INTERVAL_S: int = 60
+
     def model_post_init(self, __context: object) -> None:
         if self.KALSHI_ENV == "prod":
             assert "demo" not in self.KALSHI_REST_BASE_URL.lower(), \
