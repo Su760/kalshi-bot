@@ -18,7 +18,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import httpx
@@ -27,6 +27,9 @@ import structlog
 from src.config.settings import Settings
 from src.core.client import KalshiClient, KalshiHTTPError
 from src.core.risk_stub import RiskManagerStub
+
+if TYPE_CHECKING:
+    from src.core.risk import RiskManager
 
 logger = structlog.get_logger(__name__)
 
@@ -101,7 +104,7 @@ class Executor:
         self,
         client: KalshiClient,
         settings: Settings,
-        risk: RiskManagerStub | None = None,
+        risk: RiskManagerStub | RiskManager | None = None,
         db_conn: sqlite3.Connection | None = None,
     ) -> None:
         self._client = client
