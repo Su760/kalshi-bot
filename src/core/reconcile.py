@@ -15,8 +15,8 @@ from typing import Any
 
 import structlog
 
-from src.core.client import KalshiClient
 from src.config.settings import Settings
+from src.core.client import KalshiClient
 from src.core.risk import RiskManager
 from src.core.risk_stub import RiskManagerStub
 

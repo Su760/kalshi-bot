@@ -10,7 +10,6 @@ import pytest
 from src.core.reconcile import Reconciler, ReconcileResult
 from src.storage.db import apply_schema
 
-
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------

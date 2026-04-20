@@ -26,7 +26,8 @@ typecheck:
 	     src/core/sizing.py src/core/scanner_rules.py src/core/scanner.py \
 	     src/modules/base.py \
 	     src/core/execution.py src/core/risk_stub.py \
-	     src/core/risk.py src/orchestrator/heartbeat.py
+	     src/core/risk.py src/orchestrator/heartbeat.py \
+	     src/core/reconcile.py
 
 init-db:
 	python scripts/init_db.py
