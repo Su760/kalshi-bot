@@ -27,7 +27,8 @@ typecheck:
 	     src/modules/base.py \
 	     src/core/execution.py src/core/risk_stub.py \
 	     src/core/risk.py src/orchestrator/heartbeat.py \
-	     src/core/reconcile.py
+	     src/core/reconcile.py \
+	     src/backtest/metrics.py src/backtest/portfolio.py src/backtest/replay.py
 
 init-db:
 	python scripts/init_db.py

@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import math
 import statistics
+from typing import Any
 
 
 def brier_score(probs: list[float], outcomes: list[int]) -> float:
     """mean((p - y)^2). Lower is better."""
     if not probs:
         return 0.0
-    return sum((p - y) ** 2 for p, y in zip(probs, outcomes)) / len(probs)
+    return sum((p - y) ** 2 for p, y in zip(probs, outcomes, strict=False)) / len(probs)
 
 
 def brier_skill_score(probs: list[float], outcomes: list[int]) -> float:
@@ -29,7 +30,7 @@ def log_loss(probs: list[float], outcomes: list[int]) -> float:
         return 0.0
     eps = 1e-7
     total = 0.0
-    for p, y in zip(probs, outcomes):
+    for p, y in zip(probs, outcomes, strict=False):
         p = max(eps, min(1 - eps, p))
         total += -y * math.log(p) - (1 - y) * math.log(1 - p)
     return total / len(probs)
@@ -93,7 +94,7 @@ def calibration_buckets(
     probs: list[float],
     outcomes: list[int],
     n_buckets: int = 10,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """
     Bucket predictions into n_buckets bins.
     Returns list of dicts: bucket_low, bucket_high, mean_prob, empirical_freq, count.
@@ -103,7 +104,7 @@ def calibration_buckets(
         return []
     width = 1.0 / n_buckets
     buckets: dict[int, list[tuple[float, int]]] = {}
-    for p, y in zip(probs, outcomes):
+    for p, y in zip(probs, outcomes, strict=False):
         idx = min(int(p / width), n_buckets - 1)
         buckets.setdefault(idx, []).append((p, y))
 

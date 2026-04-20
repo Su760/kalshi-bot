@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -125,7 +125,7 @@ class Replay:
 
             market = _row_to_market(market_row)
             ob = _row_to_orderbook(snap)
-            now = datetime.fromtimestamp(snap["ts_ms"] / 1000, tz=timezone.utc)
+            now = datetime.fromtimestamp(snap["ts_ms"] / 1000, tz=UTC)
 
             if not self._module.applies_to(market):
                 continue

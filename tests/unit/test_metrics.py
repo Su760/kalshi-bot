@@ -6,8 +6,6 @@ import pytest
 from src.backtest.metrics import (
     brier_score,
     brier_skill_score,
-    calibration_buckets,
-    log_loss,
     max_drawdown,
     pnl_z_score,
     sharpe_ratio,
