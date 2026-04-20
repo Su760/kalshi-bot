@@ -35,7 +35,14 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src/core/auth.py", "src/core/client.py", "src/config/settings.py", "src/config/constants.py"]
+files = [
+    "src/core/auth.py",
+    "src/core/client.py",
+    "src/config/settings.py",
+    "src/config/constants.py",
+    "src/core/execution.py",
+    "src/core/risk_stub.py",
+]
 
 [[tool.mypy.overrides]]
 module = "sortedcontainers"
@@ -44,3 +51,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "integration: marks tests requiring live/demo API (skipped by default)",
+]

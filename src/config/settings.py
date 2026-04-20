@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     LOG_FORMAT: Literal["json", "console"] = "json"
     DB_PATH: str = "./data/kalshi.db"
 
+    # Phase 4 — execution engine
+    LIVE_TRADING: bool = False
+    ORDER_RETRY_MAX_ATTEMPTS: int = 3
+    ORDER_RETRY_BACKOFF_BASE_MS: int = 200
+    ORDER_TIMEOUT_S: float = 5.0
+
     def model_post_init(self, __context: object) -> None:
         if self.KALSHI_ENV == "prod":
             assert "demo" not in self.KALSHI_REST_BASE_URL.lower(), \

@@ -207,23 +207,35 @@ class KalshiClient:
         return self._request("GET", f"/markets/{ticker}/orderbook", params={"depth": depth})
 
     # ------------------------------------------------------------------
-    # Phase 4 stubs
+    # Phase 4 — portfolio/order endpoints
     # ------------------------------------------------------------------
 
-    def place_order(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        raise NotImplementedError("Phase 4")
+    def place_order(self, body: dict[str, Any]) -> dict[str, Any]:
+        """POST /portfolio/orders — caller supplies the fully-formed body
+        including client_order_id, count_fp and yes_price_dollars."""
+        self._check_clock_skew()
+        return self._request("POST", "/portfolio/orders", json=body)
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:
-        raise NotImplementedError("Phase 4")
+        """DELETE /portfolio/orders/{order_id}."""
+        self._check_clock_skew()
+        return self._request("DELETE", f"/portfolio/orders/{order_id}")
 
     def cancel_all(self) -> dict[str, Any]:
-        raise NotImplementedError("Phase 4")
+        """DELETE /portfolio/orders — cancels every open order."""
+        self._check_clock_skew()
+        return self._request("DELETE", "/portfolio/orders")
 
     def get_positions(self) -> dict[str, Any]:
-        raise NotImplementedError("Phase 4")
+        """GET /portfolio/positions."""
+        self._check_clock_skew()
+        return self._request("GET", "/portfolio/positions")
 
     def get_orders(self, **kwargs: Any) -> dict[str, Any]:
-        raise NotImplementedError("Phase 4")
+        """GET /portfolio/orders — accepts query params (client_order_id, status, etc.)."""
+        self._check_clock_skew()
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        return self._request("GET", "/portfolio/orders", params=params)
 
     def close(self) -> None:
         self._http.close()

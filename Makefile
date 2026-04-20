@@ -24,7 +24,8 @@ typecheck:
 	     src/core/universe.py src/storage/db.py src/core/orderbook.py \
 	     src/core/ws.py src/storage/orderbook_writer.py \
 	     src/core/sizing.py src/core/scanner_rules.py src/core/scanner.py \
-	     src/modules/base.py
+	     src/modules/base.py \
+	     src/core/execution.py src/core/risk_stub.py
 
 init-db:
 	python scripts/init_db.py
