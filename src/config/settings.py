@@ -32,6 +32,19 @@ class Settings(BaseSettings):
     ORDER_RETRY_BACKOFF_BASE_MS: int = 200
     ORDER_TIMEOUT_S: float = 5.0
 
+    # Phase 5 — risk layer
+    MAX_DAILY_LOSS_USD: float = 50.0
+    MAX_PER_MARKET_CONTRACTS: int = 100
+    MAX_PER_EVENT_PCT: float = 0.10
+    MAX_DRAWDOWN_PCT: float = 0.05
+    MAX_TOTAL_AT_RISK_PCT: float = 0.25
+    HEARTBEAT_TIMEOUT_S: int = 60
+    KELLY_FRACTION: float = 0.25
+    MIN_EDGE_PCT: float = 0.08
+    MIN_NET_EDGE_PCT: float = 0.02
+    KILL_SWITCH_FILE: str = "./KILL"
+    RISK_BALANCE_REFRESH_INTERVAL_S: int = 30
+
     def model_post_init(self, __context: object) -> None:
         if self.KALSHI_ENV == "prod":
             assert "demo" not in self.KALSHI_REST_BASE_URL.lower(), \
