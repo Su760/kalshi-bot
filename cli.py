@@ -1,4 +1,4 @@
-"""Kalshi trading bot CLI — Phase 0: health subcommand only."""
+"""Kalshi trading bot CLI."""
 
 from __future__ import annotations
 
@@ -89,6 +89,40 @@ def health() -> None:
     console.print(f"clock_skew_ms={clock_skew_ms}")
     console.print(f"balance_cents={balance_cents}")
     console.print("status=OK", style="green")
+
+
+@app.command()
+def run(
+    live: bool = typer.Option(
+        False,
+        "--live",
+        help="Enable live trading (overrides LIVE_TRADING=false in .env).",
+    ),
+) -> None:
+    """Run the bot — paper mode by default, --live to trade for real."""
+    import os as _os
+    import time as _time
+
+    if live:
+        _os.environ["LIVE_TRADING"] = "true"
+
+    from src.config.settings import get_settings
+    from src.orchestrator.main import OrchestratorLoop
+
+    settings = get_settings()
+    if settings.LIVE_TRADING:
+        console.print("=" * 60, style="yellow")
+        console.print(
+            "WARNING: Running in LIVE mode — real orders will be placed.",
+            style="bold yellow",
+        )
+        console.print("Ctrl-C within 5 seconds to abort.", style="yellow")
+        console.print("=" * 60, style="yellow")
+        _time.sleep(5)
+    else:
+        console.print("Running in PAPER mode (LIVE_TRADING=false).", style="green")
+
+    OrchestratorLoop(settings).start()
 
 
 if __name__ == "__main__":
