@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.core.types import Market
 from src.modules.base import Signal
 from src.orchestrator.loop import ScanLoop
 from src.orchestrator.main import OrchestratorLoop

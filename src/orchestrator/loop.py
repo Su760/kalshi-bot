@@ -6,7 +6,7 @@ orderbook, calls scanner.predict() and submits orders on signal.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -38,7 +38,7 @@ class ScanLoop:
 
     def run_once(self) -> int:
         """Scan all markets with live orderbooks. Returns number of signals fired."""
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         markets = self._load_open_markets()
         signals_fired = 0
 
