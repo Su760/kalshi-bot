@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Phase 6 — reconciliation
     RECONCILE_INTERVAL_S: int = 60
 
+    # Phase 8 — observability
+    PROMETHEUS_PORT: int = 8000
+    PROMETHEUS_ENABLED: bool = True
+
     def model_post_init(self, __context: object) -> None:
         if self.KALSHI_ENV == "prod":
             assert "demo" not in self.KALSHI_REST_BASE_URL.lower(), \

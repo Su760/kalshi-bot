@@ -30,6 +30,7 @@ from src.config.settings import Settings
 from src.core.client import KalshiClient
 from src.core.execution import OrderIntent
 from src.core.risk_stub import KillSwitchActive, RiskError
+from src.observability.metrics import kill_switch_trips_total, risk_checks_total
 
 logger = structlog.get_logger(__name__)
 
@@ -73,6 +74,7 @@ class RiskManager:
 
         KillSwitchActive propagates — never catch it here.
         """
+        risk_checks_total.inc()
         with self._lock:
             self._maybe_refresh_balance()
             self._check_tier1_kill_flag()
@@ -87,6 +89,7 @@ class RiskManager:
         if self._killed:
             return
         self._killed = True
+        kill_switch_trips_total.labels(reason=reason).inc()
         logger.error("risk_kill_switch_tripped", reason=reason, context=context)
         if self._db is not None:
             try:

@@ -27,6 +27,11 @@ import structlog
 from src.config.settings import Settings
 from src.core.client import KalshiClient, KalshiHTTPError
 from src.core.risk_stub import RiskManagerStub
+from src.observability.metrics import (
+    orders_filled_total,
+    orders_rejected_total,
+    orders_submitted_total,
+)
 
 if TYPE_CHECKING:
     from src.core.risk import RiskManager
@@ -128,6 +133,8 @@ class Executor:
         self._insert_pending(intent, client_order_id)
 
         # (d) Paper vs live.
+        mode = "live" if self._settings.LIVE_TRADING else "paper"
+        orders_submitted_total.labels(mode=mode).inc()
         if not self._settings.LIVE_TRADING:
             logger.info(
                 "paper_trade",
@@ -218,6 +225,8 @@ class Executor:
                     status=str(order.get("status", "resting")).lower(),
                     filled_count=int(order.get("filled_count_fp") or 0),
                 )
+                if outcome.status == "filled":
+                    orders_filled_total.inc()
                 self._update_outcome(outcome, response=resp)
                 return outcome
 
@@ -229,6 +238,7 @@ class Executor:
                         reject_code=e.code,
                         error=e.msg,
                     )
+                    orders_rejected_total.labels(reason=e.code).inc()
                     self._update_outcome(outcome, response=None)
                     return outcome
                 if e.code == "ORDER_ALREADY_EXISTS":

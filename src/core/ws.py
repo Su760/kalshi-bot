@@ -36,6 +36,7 @@ from src.core.auth import build_headers, load_private_key
 from src.core.client import KalshiClient
 from src.core.orderbook import LocalOrderbook
 from src.core.types import Orderbook, Trade
+from src.observability.metrics import ws_messages_total, ws_reconnects_total
 from src.storage.db import get_db
 from src.storage.orderbook_writer import (
     insert_orderbook_snapshots,
@@ -224,6 +225,7 @@ class KalshiWebSocket:
                 backoff = _BACKOFF_INITIAL_S  # clean exit → reset backoff
             except Exception as exc:
                 self._reconnects_total += 1
+                ws_reconnects_total.inc()
                 jitter = random.uniform(0, backoff * 0.25)
                 delay = min(backoff + jitter, _BACKOFF_CAP_S)
                 logger.warning(
@@ -276,7 +278,7 @@ class KalshiWebSocket:
         """
         for i in range(0, len(self._tickers), _SUBSCRIBE_BATCH_SIZE):
             batch = self._tickers[i : i + _SUBSCRIBE_BATCH_SIZE]
-            for channel in ("orderbook_delta", "trade"):
+            for channel in ("trade", "orderbook_snapshot"):
                 payload = {
                     "id": self._next_cmd_id(),
                     "cmd": "subscribe",
@@ -298,6 +300,15 @@ class KalshiWebSocket:
             logger.warning("ws_decode_failed", raw=str(raw)[:200])
             return
         mtype = msg.get("type")
+        _label = (
+            "snapshot" if mtype == "orderbook_snapshot"
+            else "delta" if mtype == "orderbook_delta"
+            else "trade" if mtype == "trade"
+            else "subscribed" if mtype in ("subscribed", "ok")
+            else "error" if mtype == "error"
+            else "unknown"
+        )
+        ws_messages_total.labels(type=_label).inc()
         if mtype == "orderbook_snapshot":
             await self._on_snapshot(msg)
         elif mtype == "orderbook_delta":
@@ -306,6 +317,8 @@ class KalshiWebSocket:
             await self._on_trade(msg)
         elif mtype in ("subscribed", "ok"):
             logger.info("ws_ctrl", type=mtype)
+        elif mtype == "error":
+            logger.warning("ws_error", msg=msg)
         else:
             logger.debug("ws_unhandled", type=mtype)
 
@@ -322,6 +335,9 @@ class KalshiWebSocket:
         if book is None:
             return
         book.apply_snapshot(msg)
+        if self._write_queue is not None:
+            ob = book.to_orderbook()
+            await self._write_queue.put(_persistence_row(book, ob))
 
     async def _on_delta(self, msg: dict[str, Any]) -> None:
         ticker = self._ticker_of(msg)

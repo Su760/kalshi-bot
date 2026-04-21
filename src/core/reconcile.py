@@ -19,6 +19,7 @@ from src.config.settings import Settings
 from src.core.client import KalshiClient
 from src.core.risk import RiskManager
 from src.core.risk_stub import RiskManagerStub
+from src.observability.metrics import reconcile_lost_orders_total, reconcile_orphans_total
 
 logger = structlog.get_logger(__name__)
 
@@ -133,12 +134,14 @@ class Reconciler:
                     " terminal_ts_ms=? WHERE order_id=?",
                     (now_ms, order_id),
                 )
+                reconcile_orphans_total.inc()
                 result.orphan_orders_canceled += 1
 
         for order_id, exc_order in exchange_orders.items():
             if order_id not in local_order_ids:
                 logger.warning("reconcile_lost_order", order_id=order_id)
                 self._insert_lost_order(exc_order)
+                reconcile_lost_orders_total.inc()
                 result.lost_orders_inserted += 1
 
         self._db.commit()
