@@ -55,40 +55,6 @@ OrderbookCallback = Callable[[str, Orderbook], None]
 TradeCallback = Callable[[Trade], None]
 
 
-def _rest_to_snapshot_msg(ticker: str, resp: dict[str, Any]) -> dict[str, Any]:
-    """Adapt the REST /markets/{ticker}/orderbook response to the shape
-    that `LocalOrderbook.apply_snapshot` expects.
-
-    REST returns prices in integer CENTS and sizes in `count`. WS uses
-    dollar-decimal strings. We convert on the way in so the book always
-    stores Decimal dollar prices.
-    """
-    ob = resp.get("orderbook", resp)
-    yes_raw = ob.get("yes") or []
-    no_raw = ob.get("no") or []
-
-    def _convert(rows: list[list[int]]) -> list[list[Any]]:
-        converted: list[list[Any]] = []
-        for row in rows:
-            price_cents = int(row[0])
-            size = int(row[1])
-            price_dollars = str(Decimal(price_cents) / Decimal(100))
-            converted.append([price_dollars, size])
-        return converted
-
-    return {
-        "type": "orderbook_snapshot",
-        "msg": {
-            "market_ticker": ticker,
-            # Use a synthetic seq marker. Deltas will be gated on the next
-            # live WS seq anyway — this just seeds the counter.
-            "seq": 0,
-            "yes": _convert(yes_raw),
-            "no": _convert(no_raw),
-        },
-    }
-
-
 def _persistence_row(book: LocalOrderbook, ob: Orderbook) -> dict[str, Any]:
     """Build the dict payload for orderbook_writer.insert_orderbook_snapshots."""
     best_yes = book.best_yes_bid()
@@ -333,16 +299,19 @@ class KalshiWebSocket:
         return t if isinstance(t, str) else None
 
     async def _on_snapshot(self, msg: dict[str, Any]) -> None:
+        """WS orderbook_snapshot is a subscription ACK — it carries no bid/ask data.
+
+        If the book has no REST baseline yet (seq is None), schedule a REST resync
+        to seed the initial state. Never write to orderbook_snapshots from here.
+        """
         ticker = self._ticker_of(msg)
         if ticker is None:
             return
         book = self._books.get(ticker)
         if book is None:
             return
-        book.apply_snapshot(msg)
-        if self._write_queue is not None:
-            ob = book.to_orderbook()
-            await self._write_queue.put(_persistence_row(book, ob))
+        if book.seq is None:
+            self._schedule_resync(ticker)
 
     async def _on_delta(self, msg: dict[str, Any]) -> None:
         ticker = self._ticker_of(msg)
@@ -405,10 +374,19 @@ class KalshiWebSocket:
             resp = await loop.run_in_executor(
                 None, self._client.get_orderbook, ticker, 100
             )
-            snapshot_msg = _rest_to_snapshot_msg(ticker, resp)
+            ob_fp = resp.get("orderbook_fp", {})
+            yes_levels = [
+                (round(float(p) * 100), float(s))
+                for p, s in ob_fp.get("yes_dollars", [])
+            ]
+            no_levels = [
+                (round(float(p) * 100), float(s))
+                for p, s in ob_fp.get("no_dollars", [])
+            ]
             book = self._books.get(ticker)
             if book is not None:
-                book.apply_snapshot(snapshot_msg)
+                # seq=None: REST data seeds the book; first WS delta sets the seq baseline
+                book.apply_snapshot(yes_levels, no_levels, seq=None)
                 if self._write_queue is not None:
                     ob = book.to_orderbook()
                     await self._write_queue.put(_persistence_row(book, ob))
