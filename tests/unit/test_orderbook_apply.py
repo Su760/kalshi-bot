@@ -1,4 +1,4 @@
-"""Unit tests for LocalOrderbook snapshot/delta apply and seq-gap detection."""
+"""Unit tests for LocalOrderbook snapshot/delta apply."""
 from __future__ import annotations
 
 import json
@@ -12,16 +12,24 @@ FIXTURE = (
 )
 
 
+def _parse_levels(rows: list[list[str]]) -> list[tuple[int, float]]:
+    return [(round(float(p) * 100), float(s)) for p, s in rows]
+
+
 def test_orderbook_apply_sequence() -> None:
     data = json.loads(FIXTURE.read_text())
     book = LocalOrderbook(data["ticker"])
 
-    for msg in data["messages"]:
-        if msg["type"] == "orderbook_snapshot":
-            book.apply_snapshot(msg)
-        elif msg["type"] == "orderbook_delta":
-            result = book.apply_delta(msg)
-            assert result is not None, f"Unexpected seq gap at seq {msg['msg']['seq']}"
+    snap = data["initial_snapshot"]
+    book.apply_snapshot(
+        _parse_levels(snap["yes_dollars"]),
+        _parse_levels(snap["no_dollars"]),
+        seq=snap["seq"],
+    )
+
+    for d in data["deltas"]:
+        price_cents = round(float(d["price_dollars"]) * 100)
+        book.apply_delta(d["side"], price_cents, float(d["delta_fp"]), d["seq"])
 
     expected = data["expected_final_state"]
     assert str(book.best_yes_bid()) == expected["best_yes_bid"]
@@ -35,43 +43,33 @@ def test_orderbook_apply_sequence() -> None:
     assert len(ob.no_bids) == 1
 
 
-def test_orderbook_seq_gap_returns_none() -> None:
-    book = LocalOrderbook("TEST-MARKET-0001")
-    book.apply_snapshot({
-        "type": "orderbook_snapshot",
-        "msg": {
-            "market_ticker": "TEST-MARKET-0001",
-            "seq": 100,
-            "yes": [["0.50", 10]],
-            "no": [["0.49", 10]],
-        },
-    })
-    # Skip seq 101 — apply 102 directly → should return None (gap)
-    result = book.apply_delta({
-        "type": "orderbook_delta",
-        "msg": {
-            "market_ticker": "TEST-MARKET-0001",
-            "side": "yes",
-            "price": "0.51",
-            "delta": 5,
-            "seq": 102,
-        },
-    })
-    assert result is None
-    # Gap must not have mutated state.
-    assert book.seq == 100
-    assert book.best_yes_bid() == Decimal("0.50")
+def test_apply_delta_new_level_ignored_when_negative() -> None:
+    """A negative delta for a price level that doesn't exist is ignored."""
+    book = LocalOrderbook("TEST")
+    book.apply_snapshot([(50, 10.0)], [(49, 10.0)], seq=100)
+    book.apply_delta("yes", 51, -5.0, seq=101)  # non-existent level, negative
+    assert book.best_yes_bid() == Decimal("0.50")  # unchanged
+
+
+def test_apply_delta_drops_level_at_zero() -> None:
+    """Delta reducing size to zero removes the price level."""
+    book = LocalOrderbook("TEST")
+    book.apply_snapshot([(50, 10.0)], [(49, 10.0)], seq=100)
+    book.apply_delta("yes", 50, -10.0, seq=101)
+    assert book.best_yes_bid() is None
 
 
 def test_yes_ask_impl_is_one_minus_best_no_bid() -> None:
     book = LocalOrderbook("TEST")
-    book.apply_snapshot({
-        "type": "orderbook_snapshot",
-        "msg": {
-            "market_ticker": "TEST",
-            "seq": 1,
-            "yes": [["0.60", 10]],
-            "no": [["0.35", 10]],
-        },
-    })
+    book.apply_snapshot([(60, 10.0)], [(35, 10.0)], seq=1)
     assert book.yes_ask_impl() == Decimal("0.65")  # 1.00 - 0.35
+
+
+def test_apply_snapshot_with_none_seq_leaves_seq_none() -> None:
+    """REST resync sets seq=None; first WS delta then sets it."""
+    book = LocalOrderbook("TEST")
+    book.apply_snapshot([(50, 10.0)], [(49, 10.0)], seq=None)
+    assert book.seq is None
+    # First delta accepted as baseline regardless of seq value
+    book.apply_delta("yes", 50, 5.0, seq=201)
+    assert book.seq == 201

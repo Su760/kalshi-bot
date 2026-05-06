@@ -12,8 +12,6 @@ from __future__ import annotations
 import threading
 import time
 from decimal import Decimal
-from typing import Any
-
 from sortedcontainers import SortedDict
 
 from src.core.types import Orderbook, PriceLevel
@@ -24,7 +22,7 @@ class LocalOrderbook:
 
     def __init__(self, ticker: str) -> None:
         self.ticker: str = ticker
-        self.seq: int = 0
+        self.seq: int | None = None
         # keys are NEGATED Decimal prices so iter() yields best (highest) first.
         self._yes_bids: SortedDict = SortedDict()
         self._no_bids: SortedDict = SortedDict()
@@ -34,50 +32,62 @@ class LocalOrderbook:
     # Apply
     # ------------------------------------------------------------------
 
-    def apply_snapshot(self, msg: dict[str, Any]) -> None:
-        """Apply a full `orderbook_snapshot` WS message.
+    def apply_snapshot(
+        self,
+        yes_levels: list[tuple[int, float]],
+        no_levels: list[tuple[int, float]],
+        seq: int | None,
+    ) -> None:
+        """Seed both sides from pre-parsed (price_cents, size) tuples.
 
-        Clears any prior state and reseeds both sides from the snapshot.
+        seq=None signals a REST-sourced resync where no WS sequence number
+        is available yet; the next WS delta will establish the baseline.
         """
-        m = msg["msg"]
         with self._lock:
             self._yes_bids.clear()
             self._no_bids.clear()
-            for entry in m.get("yes", []):
-                price = Decimal(str(entry[0]))
-                size = int(entry[1])
-                if size > 0:
-                    self._yes_bids[-price] = size
-            for entry in m.get("no", []):
-                price = Decimal(str(entry[0]))
-                size = int(entry[1])
-                if size > 0:
-                    self._no_bids[-price] = size
-            self.seq = int(m["seq"])
+            for price_cents, size in yes_levels:
+                price = Decimal(price_cents) / Decimal(100)
+                rounded = round(size)
+                if rounded > 0:
+                    self._yes_bids[-price] = rounded
+            for price_cents, size in no_levels:
+                price = Decimal(price_cents) / Decimal(100)
+                rounded = round(size)
+                if rounded > 0:
+                    self._no_bids[-price] = rounded
+            self.seq = seq
 
-    def apply_delta(self, msg: dict[str, Any]) -> Orderbook | None:
-        """Apply an `orderbook_delta` WS message.
+    def apply_delta(
+        self,
+        side: str,
+        price_cents: int,
+        delta: float,
+        seq: int,
+    ) -> Orderbook:
+        """Apply a single price-level delta.
 
-        Returns an `Orderbook` snapshot after applying, or `None` on seq gap.
-        On gap we do NOT mutate state; the caller triggers REST resync.
+        Semantics:
+        - Existing level: new_size = old + delta; drop if new_size <= 0.
+        - New level: insert only when delta > 0 (size = delta).
+
+        Gap detection is the caller's responsibility (see _on_delta in ws.py).
         """
-        m = msg["msg"]
-        msg_seq = int(m["seq"])
+        price = Decimal(price_cents) / Decimal(100)
+        key = -price
+        book = self._yes_bids if side == "yes" else self._no_bids
         with self._lock:
-            if msg_seq != self.seq + 1:
-                return None
-            price = Decimal(str(m["price"]))
-            delta = int(m["delta"])
-            side = m["side"]
-            book = self._yes_bids if side == "yes" else self._no_bids
-            key = -price
-            existing = book.get(key, 0)
-            new_size = existing + delta
-            if new_size <= 0:
-                book.pop(key, None)
+            existing = book.get(key)
+            if existing is None:
+                if delta > 0:
+                    book[key] = round(delta)
             else:
-                book[key] = new_size
-            self.seq = msg_seq
+                new_size = existing + delta
+                if new_size <= 0:
+                    del book[key]
+                else:
+                    book[key] = round(new_size)
+            self.seq = seq
             return self._to_orderbook_locked()
 
     # ------------------------------------------------------------------
@@ -94,7 +104,7 @@ class LocalOrderbook:
         no_bids = [PriceLevel(price=-k, size=v) for k, v in self._no_bids.items()]
         return Orderbook(
             ticker=self.ticker,
-            seq=self.seq,
+            seq=self.seq if self.seq is not None else 0,
             yes_bids=yes_bids,
             no_bids=no_bids,
             ts_ms=int(time.time() * 1000),
