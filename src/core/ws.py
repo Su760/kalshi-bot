@@ -320,10 +320,22 @@ class KalshiWebSocket:
         book = self._books.get(ticker)
         if book is None:
             return
-        ob = book.apply_delta(msg)
-        if ob is None:
+
+        top_seq = int(msg.get("seq") or 0)
+        if book.seq is not None and top_seq > book.seq + 1:
             self._schedule_resync(ticker)
             return
+
+        m = msg.get("msg") or {}
+        try:
+            side = str(m["side"])
+            price_cents = round(float(m["price_dollars"]) * 100)
+            delta = float(m["delta_fp"])
+        except (KeyError, ValueError, TypeError):
+            logger.warning("delta_parse_failed", msg=m)
+            return
+
+        ob = book.apply_delta(side, price_cents, delta, top_seq)
         assert self._write_queue is not None
         await self._write_queue.put(_persistence_row(book, ob))
         for cb in self._orderbook_callbacks:
