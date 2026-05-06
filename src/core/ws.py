@@ -345,16 +345,19 @@ class KalshiWebSocket:
                 logger.exception("orderbook_cb_failed", ticker=ticker)
 
     async def _on_trade(self, msg: dict[str, Any]) -> None:
-        m = msg.get("msg", {})
+        m = msg.get("msg") or {}
         try:
             trade = Trade(
                 trade_id=str(m["trade_id"]),
-                ticker=str(m.get("market_ticker") or m.get("ticker") or ""),
-                ts_ms=int(m.get("ts") or m.get("created_time") or int(time.time() * 1000)),
+                ticker=str(m["market_ticker"]),
+                ts_ms=int(
+                    m.get("ts_ms") or m.get("ts") or m.get("created_time")
+                    or int(time.time() * 1000)
+                ),
                 side=str(m.get("taker_side") or m.get("side") or "yes"),
-                action=str(m.get("action") or "buy"),
+                action="buy",
                 yes_price=str(m.get("yes_price_dollars") or m.get("yes_price") or "0"),
-                count=int(m.get("count_fp") or m.get("count") or 0),
+                count=round(float(m.get("count_fp") or m.get("count") or 0)),
                 is_our_fill=False,
             )
         except (KeyError, ValueError, TypeError):
