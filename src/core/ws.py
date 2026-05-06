@@ -139,8 +139,9 @@ class KalshiWebSocket:
         self._settings = settings
         self._client = client
         self._tickers: list[str] = list(tickers)
+        assert settings.kalshi_private_key_path is not None, "kalshi_private_key_path must be set"
         self._private_key: RSAPrivateKey = load_private_key(
-            settings.KALSHI_PRIVATE_KEY_PATH
+            settings.kalshi_private_key_path
         )
         self._books: dict[str, LocalOrderbook] = {
             t: LocalOrderbook(t) for t in self._tickers
@@ -242,14 +243,15 @@ class KalshiWebSocket:
                 backoff = min(backoff * 2, _BACKOFF_CAP_S)
 
     async def _connect_and_run(self) -> None:
+        assert self._settings.kalshi_api_key_id is not None, "kalshi_api_key_id must be set"
         headers = build_headers(
-            key_id=self._settings.KALSHI_API_KEY_ID,
+            key_id=self._settings.kalshi_api_key_id,
             private_key=self._private_key,
             method="GET",
-            path_or_url=self._settings.KALSHI_WS_URL,
+            path_or_url=self._settings.kalshi_ws_url,
         )
         async with connect(
-            self._settings.KALSHI_WS_URL,
+            self._settings.kalshi_ws_url,
             additional_headers=headers,
             ping_interval=15,
             ping_timeout=10,
@@ -278,7 +280,7 @@ class KalshiWebSocket:
         """
         for i in range(0, len(self._tickers), _SUBSCRIBE_BATCH_SIZE):
             batch = self._tickers[i : i + _SUBSCRIBE_BATCH_SIZE]
-            for channel in ("trade", "orderbook_snapshot"):
+            for channel in ("trade", "orderbook_delta"):
                 payload = {
                     "id": self._next_cmd_id(),
                     "cmd": "subscribe",
@@ -309,18 +311,21 @@ class KalshiWebSocket:
             else "unknown"
         )
         ws_messages_total.labels(type=_label).inc()
-        if mtype == "orderbook_snapshot":
-            await self._on_snapshot(msg)
-        elif mtype == "orderbook_delta":
-            await self._on_delta(msg)
-        elif mtype == "trade":
-            await self._on_trade(msg)
-        elif mtype in ("subscribed", "ok"):
-            logger.info("ws_ctrl", type=mtype)
-        elif mtype == "error":
-            logger.warning("ws_error", msg=msg)
-        else:
-            logger.debug("ws_unhandled", type=mtype)
+        try:
+            if mtype == "orderbook_snapshot":
+                await self._on_snapshot(msg)
+            elif mtype == "orderbook_delta":
+                await self._on_delta(msg)
+            elif mtype == "trade":
+                await self._on_trade(msg)
+            elif mtype in ("subscribed", "ok"):
+                logger.info("ws_ctrl", type=mtype)
+            elif mtype == "error":
+                logger.warning("ws_error", msg=msg)
+            else:
+                logger.debug("ws_unhandled", type=mtype)
+        except Exception:
+            logger.exception("ws_handle_message_error", mtype=mtype)
 
     def _ticker_of(self, msg: dict[str, Any]) -> str | None:
         m = msg.get("msg", {})
@@ -398,12 +403,15 @@ class KalshiWebSocket:
         try:
             loop = asyncio.get_running_loop()
             resp = await loop.run_in_executor(
-                None, self._client.get_orderbook, ticker, 200
+                None, self._client.get_orderbook, ticker, 100
             )
             snapshot_msg = _rest_to_snapshot_msg(ticker, resp)
             book = self._books.get(ticker)
             if book is not None:
                 book.apply_snapshot(snapshot_msg)
+                if self._write_queue is not None:
+                    ob = book.to_orderbook()
+                    await self._write_queue.put(_persistence_row(book, ob))
             logger.info("ws_resync_ok", ticker=ticker)
         except Exception:
             logger.exception("ws_resync_failed", ticker=ticker)

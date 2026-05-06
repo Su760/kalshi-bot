@@ -23,7 +23,6 @@ from src.core.auth import build_headers, load_private_key
 
 logger = structlog.get_logger(__name__)
 
-
 class KalshiAuthError(Exception):
     """Raised on 401/403 from Kalshi API."""
 
@@ -73,8 +72,10 @@ class _KalshiAuth(httpx.Auth):
     """httpx Auth plugin that signs every request with RSA-PSS."""
 
     def __init__(self, settings: Settings) -> None:
-        self._key_id = settings.KALSHI_API_KEY_ID
-        self._private_key = load_private_key(settings.KALSHI_PRIVATE_KEY_PATH)
+        assert settings.kalshi_api_key_id is not None, "kalshi_api_key_id must be set"
+        assert settings.kalshi_private_key_path is not None, "kalshi_private_key_path must be set"
+        self._key_id = settings.kalshi_api_key_id
+        self._private_key = load_private_key(settings.kalshi_private_key_path)
 
     def auth_flow(
         self, request: httpx.Request
@@ -117,7 +118,7 @@ class KalshiClient:
     def __init__(self, settings: Settings) -> None:
         _configure_logging(settings.LOG_FORMAT)
         self._settings = settings
-        self._base_url = settings.KALSHI_REST_BASE_URL
+        self._base_url = settings.kalshi_rest_base_url
         self._auth = _KalshiAuth(settings)
         self._bucket = _TokenBucket(rate=CLIENT_READ_RPS)
         self._http = httpx.Client(

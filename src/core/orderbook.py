@@ -12,6 +12,7 @@ from __future__ import annotations
 import threading
 import time
 from decimal import Decimal
+
 from sortedcontainers import SortedDict
 
 from src.core.types import Orderbook, PriceLevel
