@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python scripts/scan_diagnostic.py)",
+      "Bash(git stash *)",
+      "Bash(sqlite3 /Users/supashramesha/Desktop/Bots/Kalshi/data/kalshi.db ' *)",
+      "Bash(python -m pytest tests/unit/test_scanner.py::test_thin_spread_zero_spread_returns_none tests/unit/test_scanner.py::test_thin_spread_strict_cross_returns_none -v)",
+      "Bash(python -m pytest tests/unit/test_scanner.py -v)",
+      "Bash(python -m pytest tests/unit/test_orchestrator.py::test_get_top_tickers_returns_complete_events tests/unit/test_orchestrator.py::test_get_top_tickers_single_large_event_not_truncated -v)"
+    ]
+  }
+}

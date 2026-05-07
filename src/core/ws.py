@@ -50,6 +50,7 @@ _BATCH_FLUSH_ROWS = 100
 _BATCH_FLUSH_INTERVAL_S = 0.5
 _BACKOFF_INITIAL_S = 1.0
 _BACKOFF_CAP_S = 60.0
+_SEQ_GAP_THRESHOLD = 500  # genuine dropped-message gap; normal interleave << this
 
 OrderbookCallback = Callable[[str, Orderbook], None]
 TradeCallback = Callable[[Trade], None]
@@ -322,9 +323,12 @@ class KalshiWebSocket:
             return
 
         top_seq = int(msg.get("seq") or 0)
-        if book.seq is not None and top_seq > book.seq + 1:
-            self._schedule_resync(ticker)
-            return
+        if book.seq is not None:
+            if top_seq <= book.seq:
+                return  # out-of-order or duplicate — drop silently
+            if top_seq > book.seq + _SEQ_GAP_THRESHOLD:
+                self._schedule_resync(ticker)
+                return
 
         m = msg.get("msg") or {}
         try:

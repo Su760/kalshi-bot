@@ -16,10 +16,19 @@ class Settings(BaseSettings):
 
     # Required
     KALSHI_ENV: Literal["demo", "prod"]
-    KALSHI_API_KEY_ID: str
-    KALSHI_PRIVATE_KEY_PATH: str
-    KALSHI_REST_BASE_URL: str
-    KALSHI_WS_URL: str
+    LIVE_TRADING: bool = False
+
+    # Credentials (per env)
+    KALSHI_API_KEY_ID_DEMO: str | None = None
+    KALSHI_PRIVATE_KEY_PATH_DEMO: str | None = None
+    KALSHI_API_KEY_ID_PROD: str | None = None
+    KALSHI_PRIVATE_KEY_PATH_PROD: str | None = None
+
+    # Endpoints (per env)
+    KALSHI_REST_BASE_URL_DEMO: str = "https://demo-api.kalshi.co/trade-api/v2"
+    KALSHI_WS_URL_DEMO: str = "wss://demo-api.kalshi.co/trade-api/ws/v2"
+    KALSHI_REST_BASE_URL_PROD: str = "https://api.elections.kalshi.com/trade-api/v2"
+    KALSHI_WS_URL_PROD: str = "wss://api.elections.kalshi.com/trade-api/ws/v2"
 
     # Optional with defaults
     LOG_LEVEL: str = "INFO"
@@ -27,7 +36,6 @@ class Settings(BaseSettings):
     DB_PATH: str = "./data/kalshi.db"
 
     # Phase 4 — execution engine
-    LIVE_TRADING: bool = False
     ORDER_RETRY_MAX_ATTEMPTS: int = 3
     ORDER_RETRY_BACKOFF_BASE_MS: int = 200
     ORDER_TIMEOUT_S: float = 5.0
@@ -52,15 +60,25 @@ class Settings(BaseSettings):
     PROMETHEUS_PORT: int = 8000
     PROMETHEUS_ENABLED: bool = True
 
-    def model_post_init(self, __context: object) -> None:
-        if self.KALSHI_ENV == "prod":
-            assert "demo" not in self.KALSHI_REST_BASE_URL.lower(), \
-                "KALSHI_ENV=prod but base URL contains 'demo'"
-            assert "demo" not in self.KALSHI_WS_URL.lower(), \
-                "KALSHI_ENV=prod but WS URL contains 'demo'"
-        if self.KALSHI_ENV == "demo":
-            assert "demo" in self.KALSHI_REST_BASE_URL.lower(), \
-                "KALSHI_ENV=demo but base URL does not contain 'demo'"
+    # ------------------------------------------------------------------
+    # Computed properties — select credential/URL based on KALSHI_ENV
+    # ------------------------------------------------------------------
+
+    @property
+    def kalshi_api_key_id(self) -> str | None:
+        return self.KALSHI_API_KEY_ID_DEMO if self.KALSHI_ENV == "demo" else self.KALSHI_API_KEY_ID_PROD
+
+    @property
+    def kalshi_private_key_path(self) -> str | None:
+        return self.KALSHI_PRIVATE_KEY_PATH_DEMO if self.KALSHI_ENV == "demo" else self.KALSHI_PRIVATE_KEY_PATH_PROD
+
+    @property
+    def kalshi_rest_base_url(self) -> str:
+        return self.KALSHI_REST_BASE_URL_DEMO if self.KALSHI_ENV == "demo" else self.KALSHI_REST_BASE_URL_PROD
+
+    @property
+    def kalshi_ws_url(self) -> str:
+        return self.KALSHI_WS_URL_DEMO if self.KALSHI_ENV == "demo" else self.KALSHI_WS_URL_PROD
 
 
 @lru_cache(maxsize=1)

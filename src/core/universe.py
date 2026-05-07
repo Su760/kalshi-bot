@@ -20,6 +20,8 @@ _ECON_PREFIXES = ("FED", "CPI", "JOBS", "INFL", "GDP", "PCE", "PPI", "UNEMP")
 _SPORTS_PREFIXES = ("KXNBA", "KXNFL", "KXMLB", "KXNHL", "KXNASCAR", "KXSOCCER", "KXMMA", "KXCFB")
 _CRYPTO_PREFIXES = ("BTC", "ETH", "SOL", "CRYPTO")
 
+MAX_MARKETS_FETCH = 10_000
+
 
 def classify_category(market_data: dict[str, Any]) -> str:
     st: str = market_data.get("series_ticker", "")
@@ -74,8 +76,8 @@ def _parse_market(raw: dict[str, Any]) -> Market:
         close_time_ms=_iso_to_ms(raw.get("close_time")) or 0,
         latest_expiration_ms=_iso_to_ms(raw.get("expiration_time")),
         settlement_source=raw.get("settlement_source"),
-        volume_24h=int(raw.get("volume_24h") or 0),
-        open_interest=int(raw.get("open_interest") or 0),
+        volume_24h=int(float(raw.get("volume_24h_fp") or 0)),
+        open_interest=int(float(raw.get("open_interest_fp") or 0)),
         last_price_cents=raw.get("last_price"),
         raw_json=json.dumps(raw),
     )
@@ -102,6 +104,10 @@ class UniverseFetcher:
             cursor = resp.get("cursor") or None
             page += 1
             logger.info("universe_fetch_page", page=page, fetched=len(raw_markets), total=len(markets))
+
+            if len(markets) >= MAX_MARKETS_FETCH:
+                logger.warning("universe_fetch_cap_hit", cap=MAX_MARKETS_FETCH, total=len(markets))
+                break
 
             if not cursor:
                 break

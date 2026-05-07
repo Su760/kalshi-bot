@@ -6,6 +6,7 @@ orderbook, calls scanner.predict() and submits orders on signal.
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -40,11 +41,25 @@ class ScanLoop:
         """Scan all markets with live orderbooks. Returns number of signals fired."""
         now = datetime.now(tz=UTC)
         markets = self._load_open_markets()
+        t0 = time.monotonic()
+        logger.info(
+            "scan_cycle_start",
+            books_in_memory=len(self._scanner._books),
+            markets_with_books=len(markets),
+        )
         signals_fired = 0
 
         for market in markets:
             try:
                 if not self._scanner.applies_to(market):
+                    logger.debug(
+                        "scanner_skip",
+                        ticker=market.ticker,
+                        reason="applies_to_false",
+                        status=market.status,
+                        volume_24h=market.volume_24h,
+                        open_interest=market.open_interest,
+                    )
                     continue
                 signal = self._scanner.predict(market, now)
                 if signal is None:
@@ -70,6 +85,12 @@ class ScanLoop:
             except Exception:
                 logger.exception("scan_loop_market_error", ticker=market.ticker)
 
+        elapsed_ms = round((time.monotonic() - t0) * 1000)
+        logger.info(
+            "scan_cycle_end",
+            signals_generated=signals_fired,
+            duration_ms=elapsed_ms,
+        )
         return signals_fired
 
     def _maybe_submit(self, market: Market, signal: Any) -> None:
@@ -128,7 +149,7 @@ class ScanLoop:
     def _load_open_markets(self) -> list[Market]:
         """Load open markets that have live orderbooks."""
         rows = self._db.execute(
-            "SELECT * FROM markets WHERE status='open'"
+            "SELECT * FROM markets WHERE status IN ('active', 'open')"
         ).fetchall()
         markets: list[Market] = []
         for row in rows:

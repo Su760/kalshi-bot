@@ -11,6 +11,8 @@ import time
 
 import structlog
 
+from src.storage.db import get_db
+
 logger = structlog.get_logger(__name__)
 
 
@@ -19,8 +21,8 @@ class HeartbeatThread:
 
     PING_INTERVAL_S = 5
 
-    def __init__(self, db_conn: sqlite3.Connection) -> None:
-        self._db = db_conn
+    def __init__(self, db_path: str) -> None:
+        self._db = get_db(db_path)
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run,
@@ -34,6 +36,7 @@ class HeartbeatThread:
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=10)
+        self._db.close()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -45,6 +48,8 @@ class HeartbeatThread:
                     (now_ms,),
                 )
                 self._db.commit()
+            except sqlite3.OperationalError as exc:
+                logger.debug("heartbeat_ping_skipped", reason=str(exc))
             except Exception:
                 logger.exception("heartbeat_ping_failed")
             self._stop.wait(self.PING_INTERVAL_S)
