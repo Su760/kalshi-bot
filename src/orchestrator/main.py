@@ -24,6 +24,7 @@ Shutdown sequence (on SIGINT/SIGTERM/KillSwitchActive/any exception):
 """
 from __future__ import annotations
 
+import os
 import signal
 import sqlite3
 import time
@@ -47,6 +48,57 @@ from src.orchestrator.loop import ScanLoop
 from src.storage.db import apply_schema, get_default_db
 
 logger = structlog.get_logger(__name__)
+
+
+def _validate_startup(settings: Settings) -> None:
+    """Validate credentials and trading mode before any client is constructed."""
+    if settings.KALSHI_ENV == "demo":
+        if not settings.KALSHI_API_KEY_ID_DEMO:
+            raise RuntimeError("KALSHI_ENV=demo but KALSHI_API_KEY_ID_DEMO is not set")
+        if not settings.KALSHI_PRIVATE_KEY_PATH_DEMO:
+            raise RuntimeError("KALSHI_ENV=demo but KALSHI_PRIVATE_KEY_PATH_DEMO is not set")
+        if not os.path.isfile(settings.KALSHI_PRIVATE_KEY_PATH_DEMO):
+            raise RuntimeError(
+                f"KALSHI_ENV=demo but KALSHI_PRIVATE_KEY_PATH_DEMO does not exist: "
+                f"{settings.KALSHI_PRIVATE_KEY_PATH_DEMO}"
+            )
+    else:
+        if not settings.KALSHI_API_KEY_ID_PROD:
+            raise RuntimeError("KALSHI_ENV=prod but KALSHI_API_KEY_ID_PROD is not set")
+        if not settings.KALSHI_PRIVATE_KEY_PATH_PROD:
+            raise RuntimeError("KALSHI_ENV=prod but KALSHI_PRIVATE_KEY_PATH_PROD is not set")
+        if not os.path.isfile(settings.KALSHI_PRIVATE_KEY_PATH_PROD):
+            raise RuntimeError(
+                f"KALSHI_ENV=prod but KALSHI_PRIVATE_KEY_PATH_PROD does not exist: "
+                f"{settings.KALSHI_PRIVATE_KEY_PATH_PROD}"
+            )
+
+    if settings.LIVE_TRADING and settings.KALSHI_ENV == "demo":
+        raise RuntimeError(
+            "LIVE_TRADING=true with KALSHI_ENV=demo makes no sense "
+            "— demo cannot accept real orders. Aborting."
+        )
+
+    if settings.LIVE_TRADING:
+        banner = (
+            "\n============================================================\n"
+            "WARNING: LIVE TRADING ENABLED — REAL MONEY WILL BE USED\n"
+            f"Environment: {settings.KALSHI_ENV}\n"
+            "Press Ctrl+C in the next 10 seconds to abort.\n"
+            "============================================================\n"
+        )
+        print(banner, flush=True)
+        logger.warning("live_trading_enabled", env=settings.KALSHI_ENV)
+        time.sleep(10)
+
+    logger.info(
+        "boot",
+        env=settings.KALSHI_ENV,
+        live_trading=settings.LIVE_TRADING,
+        rest_url=settings.kalshi_rest_base_url,
+        ws_url=settings.kalshi_ws_url,
+    )
+
 
 SCHEMA_PATH = "src/storage/schema.sql"
 UNIVERSE_REFRESH_INTERVAL_S = 1800
@@ -97,10 +149,11 @@ class OrchestratorLoop:
 
     def _setup(self) -> None:
         """Initialize every component in dependency order."""
+        _validate_startup(self._settings)
         self._db = get_default_db()
         apply_schema(self._db, SCHEMA_PATH)
 
-        self._heartbeat = HeartbeatThread(self._db)
+        self._heartbeat = HeartbeatThread(self._settings.DB_PATH)
         self._heartbeat.start()
 
         self._exporter = MetricsExporter(
@@ -242,24 +295,52 @@ class OrchestratorLoop:
             logger.exception("reconcile_failed")
 
     def _get_top_tickers(self, n: int) -> list[str]:
-        """Get top N tickers by open_interest from DB."""
         assert self._db is not None
-        rows = self._db.execute(
-            "SELECT ticker FROM markets WHERE status='open' "
-            "ORDER BY open_interest DESC, volume_24h DESC LIMIT ?",
-            (n,),
+        now_ms = int(time.time() * 1000)
+
+        # Pass A: rank events by their most-active member's 24h volume
+        event_rows = self._db.execute(
+            """SELECT event_ticker, MAX(volume_24h) AS ev_max, COUNT(*) AS member_count
+               FROM markets
+               WHERE status IN ('active', 'open') AND close_time_ms > ?
+               GROUP BY event_ticker
+               ORDER BY ev_max DESC""",
+            (now_ms,),
         ).fetchall()
-        if not rows:
+
+        # Pass B: accumulate complete events until the subscription cap is reached.
+        # A single oversized event is accepted whole rather than truncated mid-bracket.
+        chosen_events: list[str] = []
+        total = 0
+        for row in event_rows:
+            chosen_events.append(row[0])
+            total += row[2]
+            if total >= n:
+                break
+
+        if not chosen_events:
+            # Fallback: any open markets (status edge cases)
             rows = self._db.execute(
-                "SELECT ticker FROM markets LIMIT ?", (n,)
+                "SELECT ticker FROM markets WHERE status IN ('active', 'open') LIMIT ?",
+                (n,),
             ).fetchall()
+            return [r[0] for r in rows]
+
+        placeholders = ",".join("?" * len(chosen_events))
+        rows = self._db.execute(
+            f"""SELECT ticker FROM markets
+               WHERE event_ticker IN ({placeholders})
+                 AND status IN ('active', 'open')
+                 AND close_time_ms > ?""",
+            (*chosen_events, now_ms),
+        ).fetchall()
         return [r[0] for r in rows]
 
     def _build_markets_by_event(self) -> dict[str, list[Market]]:
         """Build event_ticker → [Market] mapping for bracket arb detection."""
         assert self._db is not None
         rows = self._db.execute(
-            "SELECT * FROM markets WHERE status='open'"
+            "SELECT * FROM markets WHERE status IN ('active', 'open')"
         ).fetchall()
         result: dict[str, list[Market]] = {}
         for row in rows:

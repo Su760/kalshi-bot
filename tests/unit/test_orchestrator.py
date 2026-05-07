@@ -39,6 +39,30 @@ def _seed_market(conn: sqlite3.Connection, ticker: str = "DEMO-MKT-A") -> None:
     conn.commit()
 
 
+def _seed_event_markets(
+    conn: sqlite3.Connection,
+    event_ticker: str,
+    tickers: list[str],
+    volume_24h: int = 100,
+) -> None:
+    for t in tickers:
+        conn.execute(
+            """INSERT OR IGNORE INTO markets (
+                ticker, event_ticker, series_ticker, category, status,
+                tick_size, price_level_structure, close_time_ms,
+                first_seen_ms, last_refreshed_ms, raw_json,
+                volume_24h, open_interest
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                t, event_ticker, "SRS-A", "test", "open",
+                "0.01", "{}", 9_999_999_999_000,
+                1_000_000, 1_000_000, "{}",
+                volume_24h, 50,
+            ),
+        )
+    conn.commit()
+
+
 def _make_settings() -> MagicMock:
     s = MagicMock()
     s.LIVE_TRADING = False
@@ -132,3 +156,34 @@ def test_orchestrator_stop_sets_running_false() -> None:
     orch._running = True
     orch.stop()
     assert orch._running is False
+
+
+def test_get_top_tickers_returns_complete_events(db: sqlite3.Connection) -> None:
+    """Event-aware selection: picks top event by volume and returns ALL its members."""
+    # Event A: 3 members, high volume (500 each)
+    _seed_event_markets(db, "EVT-A", ["A1", "A2", "A3"], volume_24h=500)
+    # Event B: 2 members, low volume (100 each)
+    _seed_event_markets(db, "EVT-B", ["B1", "B2"], volume_24h=100)
+
+    settings = _make_settings()
+    orch = OrchestratorLoop(settings)
+    orch._db = db
+
+    tickers = orch._get_top_tickers(n=3)
+
+    # Must include ALL members of EVT-A (the top event)
+    assert set(tickers) >= {"A1", "A2", "A3"}
+
+
+def test_get_top_tickers_single_large_event_not_truncated(db: sqlite3.Connection) -> None:
+    """Event with more members than n is still returned whole (no mid-event truncation)."""
+    _seed_event_markets(db, "BIG-EVT", ["B1", "B2", "B3", "B4", "B5"], volume_24h=300)
+
+    settings = _make_settings()
+    orch = OrchestratorLoop(settings)
+    orch._db = db
+
+    tickers = orch._get_top_tickers(n=3)
+
+    # All 5 members returned even though n=3
+    assert set(tickers) == {"B1", "B2", "B3", "B4", "B5"}
