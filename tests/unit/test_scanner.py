@@ -122,3 +122,21 @@ def test_thin_spread_no_signal_low_volume() -> None:
         market, ob, category_median_spread_cents=2.0, z_threshold=2.0, min_volume_24h=200
     )
     assert signal is None
+
+
+def test_thin_spread_zero_spread_returns_none() -> None:
+    """yes_bid == yes_ask_impl (liquid book, zero spread) → None."""
+    market = _make_market("TIGHT", volume_24h=500)
+    # yes_bid=0.50, no_bid=0.50 → yes_ask_impl = 1 - 0.50 = 0.50 == best_yes
+    ob = _make_orderbook("TIGHT", yes_bid="0.50", no_bid="0.50")
+    signal = detect_thin_spread(market, ob, category_median_spread_cents=2.0, z_threshold=2.0)
+    assert signal is None
+
+
+def test_thin_spread_strict_cross_returns_none() -> None:
+    """yes_bid > yes_ask_impl (truly crossed book) → None."""
+    market = _make_market("CROSS", volume_24h=500)
+    # yes_bid=0.55, no_bid=0.50 → yes_ask_impl = 1 - 0.50 = 0.50 < 0.55 = best_yes
+    ob = _make_orderbook("CROSS", yes_bid="0.55", no_bid="0.50")
+    signal = detect_thin_spread(market, ob, category_median_spread_cents=2.0, z_threshold=2.0)
+    assert signal is None

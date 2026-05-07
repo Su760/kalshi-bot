@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+import structlog
+
 from src.core.types import Market, Orderbook
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass
@@ -39,12 +43,25 @@ def detect_bracket_sum_arb(
     Returns one SubSignal per market in the bracket if arb exists, else [].
     """
     if len(markets) < 2:
+        logger.debug(
+            "bracket_sum_arb_skip",
+            event_ticker=event_ticker,
+            reason="single_market_event",
+            markets_count=len(markets),
+        )
         return []
 
     best_bids: dict[str, Decimal] = {}
     for m in markets:
         ob = orderbooks.get(m.ticker)
         if ob is None or not ob.yes_bids:
+            logger.debug(
+                "bracket_sum_arb_skip",
+                event_ticker=event_ticker,
+                reason="missing_book_or_no_bids",
+                missing_ticker=m.ticker,
+                ob_is_none=ob is None,
+            )
             return []  # incomplete book — can't compute sum
         best_bids[m.ticker] = ob.yes_bids[0].price
 
@@ -52,6 +69,14 @@ def detect_bracket_sum_arb(
     deviation_cents = int((Decimal("1") - total) * 100)
 
     if deviation_cents < min_deviation_cents:
+        logger.debug(
+            "bracket_sum_arb_skip",
+            event_ticker=event_ticker,
+            reason="sum_within_tolerance",
+            bracket_sum=float(total),
+            deviation_cents=deviation_cents,
+            min_deviation_cents=min_deviation_cents,
+        )
         return []
 
     confidence = min(1.0, float(deviation_cents) / 10)  # 10¢ deviation = full confidence
@@ -92,25 +117,70 @@ def detect_thin_spread(
     Returns a SubSignal at the mid-price if the spread is anomalous.
     """
     if market.volume_24h < min_volume_24h:
+        logger.debug(
+            "thin_spread_skip",
+            ticker=market.ticker,
+            reason="volume_below_min",
+            volume_24h=market.volume_24h,
+            min_volume_24h=min_volume_24h,
+        )
         return None
     if not orderbook.yes_bids or not orderbook.no_bids:
+        logger.debug(
+            "thin_spread_skip",
+            ticker=market.ticker,
+            reason="no_bids",
+            has_yes_bids=bool(orderbook.yes_bids),
+            has_no_bids=bool(orderbook.no_bids),
+        )
         return None
 
     best_yes = orderbook.yes_bids[0].price
     best_no = orderbook.no_bids[0].price
     yes_ask_impl = Decimal("1") - best_no
 
-    if yes_ask_impl <= best_yes:
-        return None  # crossed book — data issue
+    if yes_ask_impl < best_yes:
+        logger.debug(
+            "thin_spread_skip",
+            ticker=market.ticker,
+            reason="crossed_book",
+            yes_bid=float(best_yes),
+            yes_ask_impl=float(yes_ask_impl),
+        )
+        return None
+    if yes_ask_impl == best_yes:
+        logger.debug(
+            "thin_spread_skip",
+            ticker=market.ticker,
+            reason="zero_spread",
+            best_yes=float(best_yes),
+            yes_ask_impl=float(yes_ask_impl),
+        )
+        return None
 
     spread_cents = int((yes_ask_impl - best_yes) * 100)
 
     if category_median_spread_cents <= 0:
+        logger.debug(
+            "thin_spread_skip",
+            ticker=market.ticker,
+            reason="zero_median_spread",
+            category_median=category_median_spread_cents,
+        )
         return None
 
     z_score = (spread_cents - category_median_spread_cents) / max(1.0, category_median_spread_cents * 0.5)
 
     if z_score < z_threshold:
+        logger.debug(
+            "thin_spread_skip",
+            ticker=market.ticker,
+            reason="spread_within_normal",
+            spread_cents=spread_cents,
+            category_median=category_median_spread_cents,
+            z_score=round(z_score, 2),
+            z_threshold=z_threshold,
+        )
         return None
 
     mid = float((best_yes + yes_ask_impl) / Decimal("2"))
