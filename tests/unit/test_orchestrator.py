@@ -39,6 +39,17 @@ def _seed_market(conn: sqlite3.Connection, ticker: str = "DEMO-MKT-A") -> None:
     conn.commit()
 
 
+def _seed_open_order(conn: sqlite3.Connection, ticker: str, status: str = "resting") -> None:
+    conn.execute(
+        """INSERT INTO orders
+           (client_order_id, ticker, side, action, price_dollars, count,
+            time_in_force, post_only, status, created_ts_ms, signal_module)
+           VALUES (?, ?, 'yes', 'buy', '0.50', 1, 'fok', 1, ?, 0, 'test')""",
+        (f"test-{ticker}", ticker, status),
+    )
+    conn.commit()
+
+
 def _seed_event_markets(
     conn: sqlite3.Connection,
     event_ticker: str,
@@ -148,6 +159,43 @@ def test_scan_loop_fires_signal_when_book_present(db: sqlite3.Connection) -> Non
     assert intent.side == "yes"
     assert intent.action == "buy"
     assert intent.count > 0
+
+
+def test_scan_loop_skips_duplicate_ticker(db: sqlite3.Connection) -> None:
+    """run_once() must not call executor.submit when an open order exists for the ticker."""
+    _seed_market(db, ticker="DEMO-MKT-A")
+    _seed_open_order(db, ticker="DEMO-MKT-A", status="resting")
+
+    book = MagicMock()
+    ob = MagicMock()
+    ob.yes_bids = [MagicMock(price=Decimal("0.40"), size=100)]
+    book.to_orderbook.return_value = ob
+
+    scanner = MagicMock()
+    scanner._books = {"DEMO-MKT-A": book}
+    scanner.applies_to.return_value = True
+    scanner.predict.return_value = Signal(
+        my_probability=0.70,
+        confidence=0.8,
+        data_freshness_seconds=1,
+        source_module="scanner",
+        debug={"detector": "bracket_sum_arb", "net_edge": 0.12},
+    )
+
+    executor = MagicMock()
+    executor.submit.return_value = MagicMock(status="resting")
+    settings = _make_settings()
+
+    loop = ScanLoop(
+        scanner=scanner,
+        executor=executor,
+        db_conn=db,
+        settings=settings,
+    )
+
+    loop.run_once()
+
+    executor.submit.assert_not_called()
 
 
 def test_orchestrator_stop_sets_running_false() -> None:

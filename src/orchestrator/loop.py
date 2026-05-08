@@ -65,6 +65,10 @@ class ScanLoop:
                 if signal is None:
                     continue
 
+                if self._has_open_order(market.ticker):
+                    logger.debug("scan_skip_duplicate", ticker=market.ticker)
+                    continue
+
                 signals_fired += 1
                 detector = str(signal.debug.get("detector", "unknown"))
                 signals_fired_total.labels(module="scanner", detector=detector).inc()
@@ -145,6 +149,17 @@ class ScanLoop:
             logger.warning("order_blocked_by_risk", ticker=market.ticker, reason=str(exc))
         except Exception:
             logger.exception("order_submit_failed", ticker=market.ticker)
+
+    def _has_open_order(self, ticker: str) -> bool:
+        if self._db is None:
+            return False
+        row = self._db.execute(
+            """SELECT COUNT(*) FROM orders
+               WHERE ticker = ?
+                 AND status NOT IN ('filled', 'canceled', 'rejected', 'expired')""",
+            (ticker,),
+        ).fetchone()
+        return bool(row[0] > 0)
 
     def _load_open_markets(self) -> list[Market]:
         """Load open markets that have live orderbooks."""
