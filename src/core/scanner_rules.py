@@ -15,6 +15,9 @@ from src.core.types import Market, Orderbook
 
 logger = structlog.get_logger(__name__)
 
+THIN_SPREAD_ABS_MIN_CENTS: int = 2
+STD_FLOOR_CENTS: float = 0.5
+
 
 @dataclass
 class SubSignal:
@@ -105,6 +108,7 @@ def detect_thin_spread(
     market: Market,
     orderbook: Orderbook,
     category_median_spread_cents: float,
+    category_std_spread_cents: float = 1.0,
     z_threshold: float = 2.0,
     min_volume_24h: int = 200,
 ) -> SubSignal | None:
@@ -160,31 +164,37 @@ def detect_thin_spread(
 
     spread_cents = int((yes_ask_impl - best_yes) * 100)
 
-    if category_median_spread_cents <= 0:
+    if spread_cents < THIN_SPREAD_ABS_MIN_CENTS:
         logger.debug(
             "thin_spread_skip",
             ticker=market.ticker,
-            reason="zero_median_spread",
-            category_median=category_median_spread_cents,
-        )
-        return None
-
-    z_score = (spread_cents - category_median_spread_cents) / max(1.0, category_median_spread_cents * 0.5)
-
-    if z_score < z_threshold:
-        logger.debug(
-            "thin_spread_skip",
-            ticker=market.ticker,
-            reason="spread_within_normal",
+            reason="spread_too_small_abs",
             spread_cents=spread_cents,
-            category_median=category_median_spread_cents,
-            z_score=round(z_score, 2),
-            z_threshold=z_threshold,
+            min_cents=THIN_SPREAD_ABS_MIN_CENTS,
         )
         return None
+
+    if category_std_spread_cents > STD_FLOOR_CENTS:
+        z_score = (spread_cents - category_median_spread_cents) / category_std_spread_cents
+        if z_score < z_threshold:
+            logger.debug(
+                "thin_spread_skip",
+                ticker=market.ticker,
+                reason="spread_within_normal",
+                spread_cents=spread_cents,
+                category_median=category_median_spread_cents,
+                category_std=category_std_spread_cents,
+                z_score=round(z_score, 2),
+                z_threshold=z_threshold,
+            )
+            return None
+        confidence = min(1.0, (z_score - z_threshold) / 3.0)
+    else:
+        # std ≈ 0: all markets identically priced; any spread ≥ ABS_MIN is anomalous
+        z_score = float(spread_cents)
+        confidence = min(1.0, spread_cents / 10.0)
 
     mid = float((best_yes + yes_ask_impl) / Decimal("2"))
-    confidence = min(1.0, (z_score - z_threshold) / 3.0)
 
     return SubSignal(
         my_probability=mid,
@@ -193,6 +203,7 @@ def detect_thin_spread(
         debug={
             "spread_cents": spread_cents,
             "category_median_spread_cents": category_median_spread_cents,
+            "category_std_spread_cents": category_std_spread_cents,
             "z_score": round(z_score, 2),
             "mid": round(mid, 4),
         },

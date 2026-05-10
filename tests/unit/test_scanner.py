@@ -140,3 +140,20 @@ def test_thin_spread_strict_cross_returns_none() -> None:
     ob = _make_orderbook("CROSS", yes_bid="0.55", no_bid="0.50")
     signal = detect_thin_spread(market, ob, category_median_spread_cents=2.0, z_threshold=2.0)
     assert signal is None
+
+
+def test_thin_spread_std_floor_fires_when_std_near_zero() -> None:
+    """spread=2¢, category_median=0, std=0 → fires via std-floor path (not z-score)."""
+    market = _make_market("STDFLOOR", volume_24h=500)
+    # yes_bid=0.49, no_bid=0.49 → yes_ask_impl=0.51 → spread=2¢
+    ob = _make_orderbook("STDFLOOR", yes_bid="0.49", no_bid="0.49")
+    signal = detect_thin_spread(
+        market,
+        ob,
+        category_median_spread_cents=0.0,
+        category_std_spread_cents=0.0,
+        z_threshold=2.0,
+    )
+    assert signal is not None
+    assert signal.detector == "thin_spread"
+    assert signal.debug["spread_cents"] == 2

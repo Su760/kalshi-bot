@@ -340,7 +340,7 @@ class OrchestratorLoop:
         """Build event_ticker → [Market] mapping for bracket arb detection."""
         assert self._db is not None
         rows = self._db.execute(
-            "SELECT * FROM markets WHERE status IN ('active', 'open')"
+            "SELECT * FROM markets WHERE status IN ('active', 'open') AND volume_24h > 0"
         ).fetchall()
         result: dict[str, list[Market]] = {}
         for row in rows:

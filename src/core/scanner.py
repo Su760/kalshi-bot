@@ -5,6 +5,7 @@ functions in scanner_rules.py. Every market category is in scope.
 """
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
@@ -124,16 +125,21 @@ class Scanner:
                 if _sp > 0:
                     _spreads["all"].append(_sp)
         _cat_medians: dict[str, float] = {}
+        _cat_stds: dict[str, float] = {}
         for _cat, _sps in _spreads.items():
             _sps.sort()
-            _cat_medians[_cat] = _sps[len(_sps) // 2] if _sps else 0.05
+            _cat_medians[_cat] = (_sps[len(_sps) // 2] if _sps else 0.05) * 100
+            _cat_stds[_cat] = (statistics.pstdev(_sps) if _sps else 0.0) * 100
         if not _cat_medians:
-            _cat_medians = {"all": 0.05}
-        category_median = _cat_medians.get(market.category) or _cat_medians.get("all", 0.05)
+            _cat_medians = {"all": 5.0}
+            _cat_stds = {"all": 1.0}
+        category_median = _cat_medians.get(market.category) or _cat_medians.get("all", 5.0)
+        category_std = _cat_stds.get(market.category) or _cat_stds.get("all", 1.0)
         thin = detect_thin_spread(
             market=market,
             orderbook=ob,
             category_median_spread_cents=category_median,
+            category_std_spread_cents=category_std,
             z_threshold=SPREAD_Z_THRESHOLD,
             min_volume_24h=MIN_VOLUME_24H,
         )
