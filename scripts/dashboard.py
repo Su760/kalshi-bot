@@ -1,310 +1,513 @@
-"""Local web dashboard for the Kalshi trading bot. Read-only view of data/kalshi.db."""
+"""Kalshi Bot — Streamlit dashboard, Round 1: page shell + status bar."""
+from __future__ import annotations
 
+import os
+import re
 import sqlite3
-import time
-from pathlib import Path
+import subprocess
+from datetime import datetime, timezone
 
-from flask import Flask
+import pandas as pd
+import streamlit as st
 
-DB_PATH = Path(__file__).parent.parent / "data" / "kalshi.db"
-app = Flask(__name__)
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(
+    page_title="Kalshi Bot",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ── Design system CSS ─────────────────────────────────────────────────────────
+st.markdown(
+    """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
+
+html, body, .stApp {
+    background-color: #0E0E10 !important;
+    color: #F5F5F5 !important;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Hide default Streamlit chrome */
+#MainMenu, footer, header { visibility: hidden; }
+
+.panel {
+    background: #18181B;
+    border: 1px solid #2A2A2E;
+    border-radius: 6px;
+    padding: 16px;
+}
+
+code, .mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum';
+}
+
+.status-green { color: #10B981; font-weight: 600; }
+.status-amber { color: #F59E0B; font-weight: 600; }
+.status-red   { color: #EF4444; font-weight: 600; }
+
+.badge-paper {
+    background: #1c1f2e;
+    color: #F59E0B;
+    border: 1px solid #F59E0B;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+@keyframes pulse {
+    0%   { opacity: 1; }
+    50%  { opacity: 0.4; }
+    100% { opacity: 1; }
+}
+.dot-live {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #10B981;
+    animation: pulse 2s infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+.dot-warn {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #F59E0B;
+    animation: pulse 1s infinite;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+.stat-label {
+    font-size: 11px;
+    color: #6B7280;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+.stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-feature-settings: 'tnum';
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+LOG_FILE = os.path.expanduser("~/Desktop/bot_paper_run.log")
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[mGKHF]")
+_TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z")
 
 
-def _conn() -> sqlite3.Connection:
-    """Open kalshi.db in read-only WAL mode."""
-    uri = f"file:{DB_PATH}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
-def _query(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-    with _conn() as conn:
-        return conn.execute(sql, params).fetchall()
-
-
-def _scalar(sql: str, params: tuple = ()) -> object:
-    with _conn() as conn:
-        row = conn.execute(sql, params).fetchone()
-        return row[0] if row else None
-
-
-# ── HTML helpers ──────────────────────────────────────────────────────────────
-
-CSS = """
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117;
-       color: #c9d1d9; padding: 24px; }
-h1 { font-size: 1.4rem; color: #58a6ff; margin-bottom: 4px; }
-.meta { font-size: 0.75rem; color: #8b949e; margin-bottom: 28px; }
-.panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-         padding: 20px; margin-bottom: 20px; }
-.panel h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em;
-             color: #8b949e; margin-bottom: 14px; }
-.stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 6px; }
-.stat { background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-        padding: 12px 18px; min-width: 160px; }
-.stat .label { font-size: 0.7rem; color: #8b949e; margin-bottom: 4px; }
-.stat .value { font-size: 1.25rem; color: #79c0ff; font-weight: 600; }
-.pill { display: inline-block; padding: 2px 10px; border-radius: 12px;
-        font-size: 0.75rem; font-weight: 600; margin: 2px; }
-.pill-open     { background: #1f4068; color: #79c0ff; }
-.pill-filled   { background: #1a3a2a; color: #56d364; }
-.pill-canceled { background: #3a1f2a; color: #ff7b72; }
-.pill-other    { background: #2d2d2d; color: #8b949e; }
-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-th { text-align: left; color: #8b949e; font-weight: 500; padding: 6px 10px;
-     border-bottom: 1px solid #30363d; }
-td { padding: 6px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
-tr:last-child td { border-bottom: none; }
-.side-yes { color: #56d364; }
-.side-no  { color: #ff7b72; }
-.empty { color: #484f58; font-style: italic; font-size: 0.8rem; }
-.pnl-pos { color: #56d364; }
-.pnl-neg { color: #ff7b72; }
-.age-ok  { color: #56d364; }
-.age-warn { color: #e3b341; }
-.age-dead { color: #ff7b72; }
-"""
-
-
-def _ms_to_str(ts_ms: int | None) -> str:
-    if ts_ms is None:
-        return "—"
-    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts_ms / 1000))
-
-
-def _age_str(ts_ms: int | None) -> tuple[str, str]:
-    """Return (age_text, css_class)."""
-    if ts_ms is None:
-        return "no heartbeat", "age-dead"
-    age_s = (time.time() * 1000 - ts_ms) / 1000
-    if age_s < 30:
-        cls = "age-ok"
-    elif age_s < 120:
-        cls = "age-warn"
-    else:
-        cls = "age-dead"
-    if age_s < 60:
-        label = f"{int(age_s)}s ago"
-    elif age_s < 3600:
-        label = f"{int(age_s/60)}m ago"
-    else:
-        label = f"{age_s/3600:.1f}h ago"
-    return label, cls
-
-
-def _pill_class(status: str) -> str:
-    return {"open": "pill-open", "filled": "pill-filled",
-            "canceled": "pill-canceled"}.get(status.lower(), "pill-other")
-
-
-def _pnl_class(val: str | None) -> str:
+def _parse_ts(line: str) -> datetime | None:
+    """Return UTC datetime from the first ISO-8601 timestamp found in *line*."""
+    m = _TS_RE.search(line)
+    if not m:
+        return None
     try:
-        return "pnl-pos" if float(val or 0) >= 0 else "pnl-neg"
+        return datetime.strptime(m.group(), "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=timezone.utc
+        )
     except ValueError:
-        return ""
+        return None
 
 
-# ── Data fetchers ─────────────────────────────────────────────────────────────
-
-def bot_status() -> dict:
-    snapshot_count = _scalar("SELECT COUNT(*) FROM orderbook_snapshots") or 0
-    active_markets = _scalar("SELECT COUNT(*) FROM markets WHERE status='active'") or 0
-    last_snap_ms   = _scalar("SELECT MAX(ts_ms) FROM orderbook_snapshots")
-    heartbeats     = _query("SELECT thread_name, ts_ms FROM heartbeats")
-    latest_hb_ms   = max((r["ts_ms"] for r in heartbeats), default=None)
-    return {
-        "snapshot_count": snapshot_count,
-        "active_markets": active_markets,
-        "last_snap": _ms_to_str(last_snap_ms),
-        "heartbeat_age": _age_str(latest_hb_ms),
-        "heartbeats": list(heartbeats),
-    }
+def _age_str(ts: datetime) -> str:
+    delta = (datetime.now(timezone.utc) - ts).total_seconds()
+    if delta < 60:
+        return f"{int(delta)}s ago"
+    return f"{int(delta // 60)}m ago"
 
 
-def paper_trading() -> dict:
-    total     = _scalar("SELECT COUNT(*) FROM orders") or 0
-    by_status = _query("SELECT status, COUNT(*) AS cnt FROM orders GROUP BY status")
-    recent    = _query(
-        "SELECT ticker, side, price_dollars, count, status, created_ts_ms "
-        "FROM orders ORDER BY created_ts_ms DESC LIMIT 10"
-    )
-    return {"total": total, "by_status": list(by_status), "recent": list(recent)}
+@st.cache_data(ttl=5)
+def _read_log_tail(n: int = 200) -> list[str]:
+    """Return the last *n* ANSI-stripped lines of the log file."""
+    if not os.path.exists(LOG_FILE):
+        return []
+    try:
+        with open(LOG_FILE, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+        return [_strip_ansi(ln) for ln in lines[-n:]]
+    except OSError:
+        return []
 
 
-def pnl_log() -> dict:
-    rows = _query("SELECT * FROM pnl_log ORDER BY date_utc")
-    running = 0.0
-    enriched = []
-    for r in rows:
-        try:
-            running += float(r["realized_pnl"])
-        except (ValueError, TypeError):
-            pass
-        enriched.append((r, running))
-    return {"rows": enriched}
+def _bot_status(lines: list[str]) -> tuple[str, str]:
+    """Return (html_snippet, css_class) based on recency of the last log line."""
+    for line in reversed(lines):
+        ts = _parse_ts(line)
+        if ts is None:
+            continue
+        age = (datetime.now(timezone.utc) - ts).total_seconds()
+        if age < 30:
+            return (
+                '<span class="dot-live"></span>'
+                '<span class="status-green">PAPER MODE LIVE</span>',
+                "green",
+            )
+        if age < 300:
+            return (
+                '<span class="dot-warn"></span>'
+                '<span class="status-amber">⚠ LAGGING</span>',
+                "amber",
+            )
+        break
+    return '<span class="status-red">✗ DOWN</span>', "red"
 
 
-def kill_events() -> list:
-    return _query(
-        "SELECT id, ts_ms, reason, context_json FROM kill_events ORDER BY ts_ms DESC"
-    )
+def _last_scan(lines: list[str]) -> tuple[str, str]:
+    """Return (last_scan_ago, stats_str) from the most recent scan_cycle_end line."""
+    for line in reversed(lines):
+        if "scan_cycle_end" not in line:
+            continue
+        ts = _parse_ts(line)
+        ago = _age_str(ts) if ts else "?"
+
+        dur_m = re.search(r"duration_ms=(\d+)", line)
+        sig_m = re.search(r"signals_generated=(\d+)", line)
+        dur = dur_m.group(1) if dur_m else "?"
+        sig = sig_m.group(1) if sig_m else "?"
+        stats = f"{dur}ms | {sig} signal{'s' if sig != '1' else ''}"
+        return ago, stats
+    return "—", "—"
 
 
-# ── HTML builders ─────────────────────────────────────────────────────────────
+# ── Refresh button (top-right) ────────────────────────────────────────────────
+_hdr_l, _hdr_r = st.columns([8, 1])
+with _hdr_r:
+    if st.button("🔄 Refresh"):
+        st.cache_data.clear()
+        st.rerun()
 
-def render_bot_status(d: dict) -> str:
-    hb_label, hb_cls = d["heartbeat_age"]
-    hb_rows = "".join(
-        f"<tr><td>{r['thread_name']}</td><td>{_ms_to_str(r['ts_ms'])}</td></tr>"
-        for r in d["heartbeats"]
-    ) or '<tr><td colspan="2" class="empty">no heartbeats recorded</td></tr>'
+# ── Load log data ─────────────────────────────────────────────────────────────
+log_lines = _read_log_tail()
 
-    return f"""
+# ── Top status bar ────────────────────────────────────────────────────────────
+c1, c2, c3, c4 = st.columns(4)
+
+status_html, _status_cls = _bot_status(log_lines)
+last_scan_ago, scan_stats = _last_scan(log_lines)
+
+with c1:
+    st.markdown(
+        f"""
 <div class="panel">
-  <h2>Bot Status</h2>
-  <div class="stats">
-    <div class="stat"><div class="label">Snapshots</div>
-      <div class="value">{d['snapshot_count']:,}</div></div>
-    <div class="stat"><div class="label">Active Markets</div>
-      <div class="value">{d['active_markets']:,}</div></div>
-    <div class="stat"><div class="label">Last Snapshot</div>
-      <div class="value" style="font-size:0.85rem">{d['last_snap']}</div></div>
-    <div class="stat"><div class="label">Heartbeat Age</div>
-      <div class="value {hb_cls}" style="font-size:0.9rem">{hb_label}</div></div>
-  </div>
-  <table style="margin-top:14px;width:auto">
-    <tr><th>Thread</th><th>Last Seen (UTC)</th></tr>
-    {hb_rows}
-  </table>
+  <div class="stat-label">Bot Status</div>
+  <div class="stat-value">{status_html}</div>
 </div>
-"""
+""",
+        unsafe_allow_html=True,
+    )
 
-
-def render_paper_trading(d: dict) -> str:
-    pills = "".join(
-        f'<span class="pill {_pill_class(r["status"])}">{r["status"]} ({r["cnt"]})</span>'
-        for r in d["by_status"]
-    ) or '<span class="empty">no orders</span>'
-
-    order_rows = "".join(
-        f"""<tr>
-          <td>{r['ticker']}</td>
-          <td class="{'side-yes' if r['side'] == 'yes' else 'side-no'}">{r['side'].upper()}</td>
-          <td>{r['price_dollars']}</td>
-          <td>{r['count']}</td>
-          <td><span class="pill {_pill_class(r['status'])}">{r['status']}</span></td>
-          <td style="color:#8b949e">{_ms_to_str(r['created_ts_ms'])}</td>
-        </tr>"""
-        for r in d["recent"]
-    ) or '<tr><td colspan="6" class="empty">no orders yet</td></tr>'
-
-    return f"""
+with c2:
+    st.markdown(
+        f"""
 <div class="panel">
-  <h2>Paper Trading</h2>
-  <div class="stats">
-    <div class="stat"><div class="label">Total Orders</div>
-      <div class="value">{d['total']:,}</div></div>
-  </div>
-  <div style="margin:12px 0">{pills}</div>
-  <table>
-    <tr>
-      <th>Ticker</th><th>Side</th><th>Price</th>
-      <th>Contracts</th><th>Status</th><th>Time (UTC)</th>
-    </tr>
-    {order_rows}
-  </table>
+  <div class="stat-label">Last Scan</div>
+  <div class="stat-value mono">{last_scan_ago}</div>
 </div>
-"""
+""",
+        unsafe_allow_html=True,
+    )
+
+with c3:
+    st.markdown(
+        f"""
+<div class="panel">
+  <div class="stat-label">Scan Stats</div>
+  <div class="stat-value mono">{scan_stats}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+with c4:
+    st.markdown(
+        """
+<div class="panel" style="text-align:center; padding-top:20px;">
+  <span class="badge-paper">🔒 PAPER MODE</span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+# ── Round 2: KPI strip + main grid ───────────────────────────────────────────
+DB_PATH = "data/kalshi.db"
+
+# ── DB helpers ────────────────────────────────────────────────────────────────
 
 
-def render_pnl(d: dict) -> str:
-    rows_html = ""
-    for row, running in d["rows"]:
-        rtd   = f'<td class="{_pnl_class(row["realized_pnl"])}">{row["realized_pnl"]}</td>'
-        urtd  = f'<td class="{_pnl_class(row["unrealized_pnl"])}">{row["unrealized_pnl"]}</td>'
-        runtd = f'<td class="{_pnl_class(str(running))}">{running:.4f}</td>'
-        rows_html += (
-            f"<tr><td>{row['date_utc']}</td>"
-            f"<td>{row['opening_balance']}</td><td>{row['closing_balance']}</td>"
-            f"{rtd}{urtd}<td>{row['fees_paid']}</td>"
-            f"<td>{row['trade_count']}</td><td>{row['win_count']}</td>"
-            f"<td>{row['kill_events']}</td>{runtd}</tr>"
+def _db_connect() -> sqlite3.Connection:
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+
+@st.cache_data(ttl=10)
+def _db_total_orders() -> int:
+    try:
+        with _db_connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=10)
+def _db_unique_tickers() -> int:
+    try:
+        with _db_connect() as conn:
+            return conn.execute("SELECT COUNT(DISTINCT ticker) FROM orders").fetchone()[0]
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=10)
+def _db_orders_24h() -> int:
+    try:
+        with _db_connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM orders "
+                "WHERE created_ts_ms > (strftime('%s','now')*1000 - 86400000)"
+            ).fetchone()[0]
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=10)
+def _db_last_order_ms() -> int | None:
+    try:
+        with _db_connect() as conn:
+            row = conn.execute("SELECT MAX(created_ts_ms) FROM orders").fetchone()
+            return row[0] if row else None
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=10)
+def _db_recent_orders() -> pd.DataFrame:
+    try:
+        with _db_connect() as conn:
+            df = pd.read_sql_query(
+                "SELECT ticker, side, action, price_dollars, count, status, created_ts_ms "
+                "FROM orders ORDER BY created_ts_ms DESC LIMIT 20",
+                conn,
+            )
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=10)
+def _db_orders_by_hour() -> pd.DataFrame:
+    try:
+        with _db_connect() as conn:
+            df = pd.read_sql_query(
+                "SELECT strftime('%H:00', datetime(created_ts_ms/1000,'unixepoch','localtime')) as hr, "
+                "COUNT(*) as n FROM orders GROUP BY hr ORDER BY hr",
+                conn,
+            )
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=10)
+def _db_snapshot_count() -> int:
+    try:
+        with _db_connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM orderbook_snapshots").fetchone()[0]
+    except Exception:
+        return 0
+
+
+@st.cache_data(ttl=10)
+def _db_active_markets() -> int:
+    try:
+        with _db_connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM markets WHERE status='active'"
+            ).fetchone()[0]
+    except Exception:
+        return 0
+
+
+def _ms_age_str(ts_ms: int | None) -> str:
+    """Convert epoch-ms timestamp to human age string (seconds/minutes/hours)."""
+    if ts_ms is None:
+        return "No orders yet"
+    ts = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+    delta = (datetime.now(timezone.utc) - ts).total_seconds()
+    if delta < 60:
+        return f"{int(delta)}s ago"
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    return f"{int(delta // 3600)}h ago"
+
+
+# ── Section 1: Hero KPIs ──────────────────────────────────────────────────────
+st.markdown("---")
+
+kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+
+with kpi1:
+    st.markdown(
+        f"""
+<div class="panel">
+  <div class="stat-label">Total Orders</div>
+  <div class="stat-value mono">{_db_total_orders()}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+with kpi2:
+    st.markdown(
+        f"""
+<div class="panel">
+  <div class="stat-label">Unique Tickers</div>
+  <div class="stat-value mono">{_db_unique_tickers()}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+with kpi3:
+    st.markdown(
+        f"""
+<div class="panel">
+  <div class="stat-label">Orders (24h)</div>
+  <div class="stat-value mono">{_db_orders_24h()}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+with kpi4:
+    st.markdown(
+        f"""
+<div class="panel">
+  <div class="stat-label">Last Order</div>
+  <div class="stat-value mono">{_ms_age_str(_db_last_order_ms())}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+# ── Section 2: Main grid ──────────────────────────────────────────────────────
+_left, _right = st.columns([3, 2])
+
+with _left:
+    # ── Recent Orders ──────────────────────────────────────────────────────
+    st.markdown("#### Recent Orders")
+    _orders_raw = _db_recent_orders()
+    if _orders_raw.empty:
+        st.info("No orders yet")
+    else:
+        _orders = _orders_raw.copy()
+        _orders["Time"] = (
+            pd.to_datetime(_orders["created_ts_ms"], unit="ms", utc=True)
+            .dt.tz_convert("America/Chicago")
+            .dt.strftime("%H:%M:%S")
+        )
+        _orders["Ticker"] = _orders["ticker"].apply(
+            lambda t: t[:28] + "…" if len(str(t)) > 28 else t
+        )
+        _orders["Side"] = _orders["side"].str.upper()
+        _orders["Price"] = (_orders["price_dollars"].astype(float) * 100).round().astype(int).astype(str) + "¢"
+        _orders["Qty"] = _orders["count"]
+        _orders["Status"] = _orders["status"]
+        st.dataframe(
+            _orders[["Time", "Ticker", "Side", "Price", "Qty", "Status"]],
+            use_container_width=True,
+            hide_index=True,
         )
 
-    if not rows_html:
-        rows_html = '<tr><td colspan="10" class="empty">no P&amp;L records yet</td></tr>'
+    # ── Scanner Activity ───────────────────────────────────────────────────
+    st.markdown("#### Scanner Activity")
+    _scan_rows: list[dict] = []
+    for _ln in reversed(log_lines):
+        if "scan_cycle_end" not in _ln:
+            continue
+        _ts = _parse_ts(_ln)
+        _dur_m = re.search(r"duration_ms=(\d+)", _ln)
+        _sig_m = re.search(r"signals_generated=(\d+)", _ln)
+        _scan_rows.append(
+            {
+                "Time": _age_str(_ts) if _ts else "?",
+                "Duration": f"{_dur_m.group(1)}ms" if _dur_m else "?",
+                "Signals": int(_sig_m.group(1)) if _sig_m else 0,
+            }
+        )
+        if len(_scan_rows) >= 10:
+            break
 
-    return f"""
-<div class="panel">
-  <h2>P&amp;L Log</h2>
-  <table>
-    <tr>
-      <th>Date</th><th>Open Bal</th><th>Close Bal</th>
-      <th>Realized</th><th>Unrealized</th><th>Fees</th>
-      <th>Trades</th><th>Wins</th><th>Kill Evts</th><th>Running Total</th>
-    </tr>
-    {rows_html}
-  </table>
+    if not _scan_rows:
+        st.info("No scan data")
+    else:
+        st.dataframe(
+            pd.DataFrame(_scan_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+with _right:
+    # ── Orders / Hour ──────────────────────────────────────────────────────
+    st.markdown("#### Orders / Hour")
+    _hourly = _db_orders_by_hour()
+    if _hourly.empty:
+        st.info("No order history yet")
+    else:
+        st.bar_chart(_hourly.set_index("hr"))
+
+    # ── DB Stats ───────────────────────────────────────────────────────────
+    st.markdown("#### DB Stats")
+
+    def _file_size(path: str) -> str:
+        try:
+            return f"{os.path.getsize(path) / 1_048_576:.1f}MB"
+        except OSError:
+            return "?"
+
+    _ds1, _ds2 = st.columns(2)
+    with _ds1:
+        st.metric("Snapshots", _db_snapshot_count())
+        st.metric("Log size", _file_size(os.path.expanduser("~/Desktop/bot_paper_run.log")))
+    with _ds2:
+        st.metric("Active Markets", _db_active_markets())
+        st.metric("DB size", _file_size(DB_PATH))
+
+# ── Footer ────────────────────────────────────────────────────────────────────
+
+
+def _git_sha() -> str:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, check=False, timeout=2,
+        )
+        return out.stdout.strip() if out.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
+st.markdown("---")
+_now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+st.markdown(
+    f"""
+<div style="text-align: center; color: #6B7280; font-size: 11px;
+            font-family: 'JetBrains Mono', monospace; padding: 16px 0;">
+  build {_git_sha()} · DB: {DB_PATH} · refreshed {_now}
 </div>
-"""
-
-
-def render_kill_events(rows: list) -> str:
-    rows_html = "".join(
-        f"<tr><td>{r['id']}</td><td>{_ms_to_str(r['ts_ms'])}</td>"
-        f"<td style='color:#ff7b72'>{r['reason']}</td>"
-        f"<td style='color:#8b949e;font-size:0.72rem'>{r['context_json']}</td></tr>"
-        for r in rows
-    ) or '<tr><td colspan="4" class="empty">no kill events — good</td></tr>'
-
-    return f"""
-<div class="panel">
-  <h2>Kill Events</h2>
-  <table>
-    <tr><th>#</th><th>Time (UTC)</th><th>Reason</th><th>Context</th></tr>
-    {rows_html}
-  </table>
-</div>
-"""
-
-
-# ── Route ─────────────────────────────────────────────────────────────────────
-
-@app.route("/")
-def index() -> str:
-    now     = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
-    status  = bot_status()
-    trading = paper_trading()
-    pnl     = pnl_log()
-    kills   = kill_events()
-
-    body = (
-        render_bot_status(status)
-        + render_paper_trading(trading)
-        + render_pnl(pnl)
-        + render_kill_events(kills)
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="10">
-  <title>Kalshi Bot Dashboard</title>
-  <style>{CSS}</style>
-</head>
-<body>
-  <h1>Kalshi Bot Dashboard</h1>
-  <p class="meta">Last updated: {now} &nbsp;&middot;&nbsp; Auto-refreshes every 10 seconds</p>
-  {body}
-</body>
-</html>"""
-
-
-if __name__ == "__main__":
-    print(f"Dashboard → http://localhost:5050  (DB: {DB_PATH})")
-    app.run(host="0.0.0.0", port=5050, debug=False)
+""",
+    unsafe_allow_html=True,
+)

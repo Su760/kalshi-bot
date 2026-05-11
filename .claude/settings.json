@@ -6,7 +6,19 @@
       "Bash(sqlite3 /Users/supashramesha/Desktop/Bots/Kalshi/data/kalshi.db ' *)",
       "Bash(python -m pytest tests/unit/test_scanner.py::test_thin_spread_zero_spread_returns_none tests/unit/test_scanner.py::test_thin_spread_strict_cross_returns_none -v)",
       "Bash(python -m pytest tests/unit/test_scanner.py -v)",
-      "Bash(python -m pytest tests/unit/test_orchestrator.py::test_get_top_tickers_returns_complete_events tests/unit/test_orchestrator.py::test_get_top_tickers_single_large_event_not_truncated -v)"
+      "Bash(python -m pytest tests/unit/test_orchestrator.py::test_get_top_tickers_returns_complete_events tests/unit/test_orchestrator.py::test_get_top_tickers_single_large_event_not_truncated -v)",
+      "Bash(sqlite3 data/kalshi.db \".schema\")",
+      "Read(//Users/supashramesha/Desktop/**)",
+      "Bash(pip show *)",
+      "Bash(python -m streamlit run scripts/dashboard.py --server.headless true)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8501/)",
+      "Bash(curl -s http://localhost:8501/)",
+      "Bash(python3 -c \"import sys; d=sys.stdin.read\\(\\); print\\('Has title:', 'Kalshi' in d or 'streamlit' in d.lower\\(\\)\\); print\\('Size:', len\\(d\\), 'bytes'\\)\")",
+      "Read(//Users/supashramesha/**)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('scripts/dashboard.py'\\).read\\(\\)\\); print\\('AST parse OK'\\)\")",
+      "Bash(python -m streamlit run scripts/dashboard.py --server.headless true --server.port 8502)",
+      "Bash(curl -s http://localhost:8502/)",
+      "Bash(curl -o /dev/null -s -w \"%{http_code}\" http://localhost:8501/)"
     ]
   }
 }
